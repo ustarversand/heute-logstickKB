@@ -1,0 +1,20 @@
+version: '3'
+
+services:
+  dashboard:
+    build: .
+    image: ustar-heute-dashboard:latest
+    container_name: ustar-heute-dashboard
+    restart: unless-stopped
+    ports:
+      - "8890:8890"
+    environment:
+      - DASHBOARD_PORT=8890
+      - HEUTE_USERNAME=${HEUTE_USERNAME:-USTAR}
+      - HEUTE_PASSWORD=${HEUTE_PASSWORD}
+      - MSCJ_USERNAME=${MSCJ_USERNAME:-MSCJ}
+      - MSCJ_PASSWORD=${MSCJ_PASSWORD}
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

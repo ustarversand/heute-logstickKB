@@ -1,0 +1,3549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>货易达物流看板</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0f172a; --card: #1e293b; --border: #334155;
+  --text: #e2e8f0; --text2: #94a3b8;
+  --accent: #3b82f6; --success: #22c55e; --warn: #f59e0b; --danger: #ef4444;
+  --purple: #a855f7;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+.app { max-width: 1440px; margin: 0 auto; padding: 20px; }
+
+/* Header */
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+.header h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
+.header h1 span { background: var(--accent); padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 400; }
+.header-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--text2); }
+.btn { padding: 6px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text);
+       cursor: pointer; font-size: 13px; transition: .2s; }
+.btn:hover { background: var(--border); }
+.btn-primary { background: var(--accent); border-color: var(--accent); }
+.btn-primary:hover { opacity: .85; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+.clickable { cursor: pointer; text-decoration: underline dotted rgba(59,130,246,.4); transition: .2s; }
+.clickable:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+/* Stats Cards */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.anomaly-banner { display:flex; align-items:center; gap:10px; padding:10px 16px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:10px; margin-bottom:16px; cursor:pointer; font-size:13px; color:var(--text); transition:background .2s; }
+.anomaly-banner:hover { background:rgba(239,68,68,0.2); }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.stat-card .label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+.stat-card .value { font-size: 28px; font-weight: 700; }
+.stat-card .sub { font-size: 11px; margin-top: 4px; }
+.stat-card .sub.positive { color: var(--success); }
+.stat-card .sub.negative { color: var(--danger); }
+
+/* Charts */
+.charts { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 12px; margin-bottom: 20px; }
+.chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.chart-card h3 { font-size: 13px; color: var(--text2); margin-bottom: 12px; }
+.chart-card canvas { max-height: 220px; }
+
+/* Sections */
+.section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
+.section-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px;
+                  border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 8px; }
+.section-header h2 { font-size: 15px; }
+.section-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 12px; color: var(--text2); font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 10px 12px; border-bottom: 1px solid rgba(51,65,85,.5); }
+tr:hover td { background: rgba(59,130,246,.05); }
+.mono { font-family: 'SF Mono', monospace; font-size: 12px; }
+.status-signed { color: var(--success); }
+.status-transit { color: var(--accent); }
+.status-error { color: var(--danger); }
+.status-other { color: var(--warn); }
+.status-confirmed { color: #a855f7; }  /* 紫色：国内确认签收 */
+
+/* ─── 手动状态下拉菜单 ─── */
+.status-dropdown-wrap { position: relative; display: inline-block; }
+.status-dropdown-btn { padding: 2px 10px; border:1px solid var(--border); border-radius:4px; background:var(--card); cursor:pointer; font-size:12px; transition:.2s; }
+.status-dropdown-btn:hover { background:var(--border); }
+.status-dropdown-menu { position:absolute; top:100%; right:0; z-index:100; min-width:150px;
+  background:var(--card); border:1px solid var(--border); border-radius:6px; padding:4px 0;
+  box-shadow:0 8px 24px rgba(0,0,0,.4); }
+.status-dropdown-item { display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px;
+  cursor:pointer; transition:.15s; white-space:nowrap; }
+.status-dropdown-item:hover { background:rgba(59,130,246,.15); }
+.status-dropdown-item.active { background:rgba(59,130,246,.1); border-left:2px solid var(--accent); }
+.abnormal-actions { display:flex; gap:4px; align-items:center; flex-wrap:nowrap; }
+.abnormal-actions .btn-icon { padding:2px 6px; border:1px solid var(--border); border-radius:4px;
+  background:var(--card); cursor:pointer; font-size:13px; line-height:1; transition:.2s; }
+.abnormal-actions .btn-icon:hover { background:var(--border); }
+
+/* Toast */
+.toast { position:fixed; bottom:30px; right:30px; z-index:9999; padding:10px 20px;
+  border-radius:8px; font-size:14px; box-shadow:0 4px 20px rgba(0,0,0,.5);
+  transition:opacity .3s,transform .3s; pointer-events:none; }
+.toast-success { background:#22c55e; color:#fff; }
+.toast-error { background:#ef4444; color:#fff; }
+.toast-info { background:#3b82f6; color:#fff; }
+.batch-cb { width:18px;height:18px;cursor:pointer;accent-color:var(--accent); }
+.abnormal-row.selected { background:rgba(59,130,246,.08) !important; }
+.batch-bar { display:flex; gap:8px; align-items:center; padding:8px 12px;
+  background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.2);
+  border-radius:6px; margin:8px 0; flex-wrap:wrap; }
+.batch-bar .count { font-size:12px; color:var(--text2); margin-right:8px; }
+
+/* Search & Filter */
+.search-box { display: flex; gap: 8px; }
+.search-box input { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+                   color: var(--text); font-size: 13px; outline: none; width: 200px; }
+.search-box input:focus { border-color: var(--accent); }
+select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+         color: var(--text); font-size: 13px; outline: none; }
+
+/* Pagination */
+.pagination { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 12px; }
+.pagination span { font-size: 12px; color: var(--text2); }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; justify-content: center;
+                 align-items: center; z-index: 100; padding: 20px; }
+.modal { background: var(--card); border: 1px solid var(--border); border-radius: 12px; max-width: 700px;
+          width: 100%; max-height: 80vh; overflow-y: auto; }
+.modal-header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.modal-header h2 { font-size: 16px; }
+.modal-close { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 20px; }
+.modal-body { padding: 16px; }
+.timeline { position: relative; padding-left: 24px; }
+.timeline::before { content: ''; position: absolute; left: 8px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+.timeline-item { position: relative; margin-bottom: 14px; }
+.timeline-item::before { content: ''; position: absolute; left: -18px; top: 6px; width: 10px; height: 10px;
+                          border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+.timeline-item.signed::before { background: var(--success); }
+.timeline-item.warn::before { background: var(--warn); }
+.timeline-item .time { font-size: 11px; color: var(--text2); }
+.timeline-item .desc { font-size: 13px; margin: 2px 0; }
+.timeline-item .loc { font-size: 11px; color: var(--text2); }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding: 0 0; overflow-x: auto; }
+.tab-btn { padding: 10px 18px; font-size: 13px; background: none; border: none; color: var(--text2); cursor: pointer;
+           border-bottom: 2px solid transparent; transition: .2s; white-space: nowrap; }
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-content { animation: fadeIn .25s ease; }
+.loading { text-align: center; padding: 40px; color: var(--text2); font-size: 14px; }
+.error-bar { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3); border-radius: 8px;
+             padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: var(--danger); }
+
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 13px; }
+.detail-grid div { padding: 4px 0; border-bottom: 1px solid rgba(51,65,85,.2); }
+.detail-grid span { color: var(--text2); display: inline-block; min-width: 64px; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .charts { grid-template-columns: 1fr 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .charts { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .header { flex-direction: column; align-items: flex-start; }
+  .search-box input { width: 140px; }
+}
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: fadeIn .3s ease; }
+/* Toggle Switch */
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 24px; transition: .3s; }
+.toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .3s; }
+.toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+/* 进度条 */
+.track-progress-bar { 
+  margin: -8px 0 16px; 
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.track-progress-bar .progress-phase {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.track-progress-bar .progress-phase-icon {
+  font-size: 18px;
+  width: 28px;
+  text-align: center;
+}
+.track-progress-bar .progress-phase-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.track-progress-bar .progress-phase-detail {
+  color: var(--text2);
+  font-size: 12px;
+  margin-left: auto;
+}
+.track-progress-bar .progress-track { 
+  position: relative; 
+  height: 24px; 
+  background: var(--bg); 
+  border-radius: 12px; 
+  overflow: hidden; 
+  border: 1px solid var(--border); 
+}
+.track-progress-bar .progress-fill { 
+  height: 100%; 
+  border-radius: 12px; 
+  transition: width .6s ease;
+}
+.track-progress-bar .progress-fill.phase-syncing { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+.track-progress-bar .progress-fill.phase-preparing { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.track-progress-bar .progress-fill.phase-tracking { background: linear-gradient(90deg, #22c55e, #3b82f6); }
+.track-progress-bar .progress-fill.phase-done { background: linear-gradient(90deg, #22c55e, #16a34a); }
+.track-progress-bar .progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.15) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: progressShimmer 1.5s infinite;
+}
+@keyframes progressShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.track-progress-bar .progress-pct { 
+  position: absolute; 
+  inset: 0; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+  font-size: 12px; 
+  font-weight: 700; 
+  color: #fff; 
+  text-shadow: 0 1px 3px rgba(0,0,0,.6); 
+  letter-spacing: .5px;
+}
+.track-progress-bar .progress-steps {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text2);
+}
+.track-progress-bar .progress-step {
+  flex: 1;
+  text-align: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  opacity: .4;
+  transition: .3s;
+}
+.track-progress-bar .progress-step.active { 
+  opacity: 1;
+  background: rgba(59,130,246,.15);
+  color: var(--accent);
+  font-weight: 600;
+}
+.track-progress-bar .progress-step.done { 
+  opacity: .8;
+  color: var(--success);
+}
+</style>
+</head>
+<body>
+<div id="app" class="app">
+  <div v-if="error" class="error-bar">⚠ {{ error }}</div>
+
+  <!-- ── Login Page ── -->
+  <div v-if="!auth.loggedIn" style="display:flex;justify-content:center;align-items:center;min-height:80vh">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:40px;width:400px;max-width:90vw">
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="font-size:48px;margin-bottom:12px">📦</div>
+        <h1 style="font-size:20px;margin-bottom:4px">货易达物流看板</h1>
+        <p style="color:var(--text2);font-size:13px">请登录查看您的运单</p>
+      </div>
+      <div v-if="loginError" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--danger)">⚠ {{ loginError }}</div>
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;color:var(--text2);margin-bottom:6px">用户名</label>
+        <input type="text" v-model="loginUsername" @keyup.enter="doLogin" placeholder="输入您的寄件人名称" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;outline:none">
+      </div>
+      <div style="margin-bottom:24px">
+        <label style="display:block;font-size:13px;color:var(--text2);margin-bottom:6px">密码</label>
+        <input type="password" v-model="loginPassword" @keyup.enter="doLogin" placeholder="统一密码: 123456" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;outline:none">
+      </div>
+      <button class="btn btn-primary" @click="doLogin" :disabled="loginLoading" style="width:100%;padding:12px;font-size:15px">
+        {{ loginLoading ? '登录中...' : '🔑 登录' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Dashboard ── -->
+  <template v-if="auth.loggedIn">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>📦 货易达物流看板 <span>v1.0</span></h1>
+    <div class="header-right">
+      <span style="color:var(--accent);font-weight:500">👤 {{ auth.username }}</span>
+      <button class="btn" @click="doLogout" style="font-size:12px;padding:4px 12px">退出</button>
+      <select v-model="currentMonth" @change="switchMonth" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+        <option value="april">📅 2026年4月</option>
+        <option value="may">📅 2026年5月</option>
+      </select>
+      <span>🔄 {{ autoRefresh ? '自动刷新中' : '手动' }}</span>
+      <span>⏱ {{ lastUpdate }}</span>
+      <button class="btn" @click="toggleAutoRefresh">{{ autoRefresh ? '暂停' : '自动' }}</button>
+      <button class="btn btn-primary" @click="refresh" :disabled="loading">刷新</button>
+      <button class="btn btn-warning" @click="queryUntracked" :disabled="loading || batchUpdating || trackRunning || batchBusy">{{ trackRunning ? '⏳ 查询中...' : (batchBusy ? '🔒 任务运行中' : '一键更新') }}</button>
+      <button class="btn" @click="syncOrders" :disabled="orderSyncing || orderSyncBusy"
+        style="border-color:var(--accent);color:var(--accent)">{{ orderSyncing ? '⏳ 同步中...' : (orderSyncBusy ? '🔒 同步中' : '📥 同步订单') }}</button>
+    </div>
+    <!-- 进度条 -->
+    <div v-if="trackRunning" class="track-progress-bar">
+      <div class="progress-phase">
+        <span class="progress-phase-icon">{{ trackPhaseIcon }}</span>
+        <span class="progress-phase-label">{{ trackPhaseLabel }}</span>
+        <span class="progress-phase-detail">{{ trackMsgText }}</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" :class="'phase-' + trackPhase" :style="{width: trackPercent + '%'}"></div>
+        <span class="progress-pct">{{ trackPercent }}%</span>
+      </div>
+      <div class="progress-steps">
+        <div class="progress-step" :class="{active: trackPhase==='syncing', done: ['preparing','tracking','done'].includes(trackPhase)}">📥 同步订单</div>
+        <div class="progress-step" :class="{active: trackPhase==='preparing', done: ['tracking','done'].includes(trackPhase)}">🔍 筛选</div>
+        <div class="progress-step" :class="{active: trackPhase==='tracking', done: trackPhase==='done'}">🚀 查询轨迹</div>
+        <div class="progress-step" :class="{active: trackPhase==='done'}">✅ 完成</div>
+      </div>
+    </div>
+
+    <!-- 订单同步进度条 -->
+    <div v-if="orderSyncing || orderSyncBusy" class="track-progress-bar" style="margin-top:4px;border-color:var(--accent)">
+      <div class="progress-phase">
+        <span class="progress-phase-icon">{{ orderPhaseIcon }}</span>
+        <span class="progress-phase-label">{{ orderPhaseLabel }}</span>
+        <span class="progress-phase-detail">{{ orderMsg }}</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" :class="'phase-' + orderPhase" :style="{width: orderPercent + '%'}"></div>
+        <span class="progress-pct">{{ orderPercent }}%</span>
+      </div>
+      <div class="progress-steps">
+        <div class="progress-step" :class="{active: orderPhase==='syncing', done: ['preparing','tracking','done'].includes(orderPhase)}">📥 拉取订单</div>
+        <div class="progress-step" :class="{active: orderPhase==='preparing', done: orderPhase==='done'}">💾 写入DB</div>
+        <div class="progress-step" :class="{active: orderPhase==='done'}">✅ 完成</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 双轨断更提示条 -->
+  <div v-if="stats.severe_anomalies > 0" class="anomaly-banner" @click="showAnomalyModal = true; loadAnomalyModal()">
+    <span style="font-size:16px">🔴</span>
+    <span><b>{{ stats.severe_anomalies }}</b> 单国际断更 —
+      国内已签收但货易达未更新
+      <span style="text-decoration:underline;margin-left:8px">查看对比 →</span>
+    </span>
+  </div>
+  <!-- 异常统计卡片 -->
+  <div class="stats fade-in">
+    <div class="stat-card">
+      <div class="label">📋 总订单</div>
+      <div class="value" style="color:var(--accent)">{{ stats.total_orders }}</div>
+      <div class="sub">{{ auth.role==='admin' ? '全部寄件人' : auth.username }} | {{ currentMonth==='april'?'4月':'5月' }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">📡 已查轨迹</div>
+      <div class="value" style="color:var(--success)">{{ stats.tracked }}</div>
+      <div class="sub" :class="stats.untracked > 0 ? 'negative' : 'positive'">
+        {{ stats.untracked > 0 ? `待查 ${stats.untracked}` : '全部完成' }}
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">✅ 已签收</div>
+      <div class="value" style="color:var(--success)">{{ stats.signed_total }}</div>
+      <div class="sub positive">{{ getSignedPercent() }}% 已签收
+        <span v-if="stats.signed_domestic_only > 0" style="font-size:11px;color:var(--text2)">(含{{ stats.signed_domestic_only }}国内确认)</span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">🚚 运输中</div>
+      <div class="value" style="color:var(--accent)">{{ getTransitCount() }}</div>
+      <div class="sub">含清关/派件/在途</div>
+    </div>
+    <div class="stat-card">
+      <div class="label" style="color:var(--danger)">⚠ 异常</div>
+      <div class="value" style="color:var(--danger)">{{ stats.abnormal_count }}</div>
+      <div class="sub negative">超7天未入库</div>
+    </div>
+    <div class="stat-card">
+      <div class="label" style="color:var(--text2)">🗑 已撤销</div>
+      <div class="value" style="color:var(--text2)">{{ stats.cancelled_count }}</div>
+      <div class="sub">状态-6 无需查询</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn" :class="{active:activeTab==='overview'}" @click="activeTab='overview';switchTab()">📊 概览</button>
+    <button class="tab-btn" :class="{active:activeTab==='abnormal'}" @click="activeTab='abnormal'">⚠️ 异常 ({{ stats.abnormal_count }})</button>
+    <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='anomalies'}" @click="activeTab='anomalies';loadAnomalies()">🔍 对比 ({{ anomalyStats.severe || 0 }})</button>
+    <button class="tab-btn" :class="{active:activeTab==='cancelled'}" @click="activeTab='cancelled'">🗑 已撤销 ({{ stats.cancelled_count }})</button>
+    <button class="tab-btn" :class="{active:activeTab==='tracking'}" @click="activeTab='tracking';loadTracking()">📡 轨迹 ({{ stats.tracked }})</button>
+    <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='finance'}" @click="activeTab='finance';loadFinance();loadProductStats()">💰 财务</button>
+    <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='overweight'}" @click="activeTab='overweight';loadOverweight()">📦 超重</button>
+    <button class="tab-btn" :class="{active:activeTab==='search'}" @click="activeTab='search'">🔍 查询</button>
+    <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='admin'}" @click="activeTab='admin';loadAdminSenders()">👥 管理</button>
+    <button class="tab-btn" :class="{active:activeTab==='aftersales'}" @click="activeTab='aftersales';loadAfterSales()">🛠 售后</button>
+    <button class="tab-btn" :class="{active:activeTab==='todo'}" @click="activeTab='todo';loadTodo()">📋 待办 ({{ todoTotal || 0 }})</button>
+  </div>
+
+  <!-- Tab: 概览 -->
+  <div v-if="activeTab==='overview'" class="tab-content">
+    <div class="charts" v-if="chartReady">
+      <div class="chart-card">
+        <h3>订单状态分布</h3>
+        <canvas ref="stateChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>物流轨迹状态</h3>
+        <canvas ref="trackChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>每周订单量</h3>
+        <canvas ref="weeklyChart"></canvas>
+      </div>
+    </div>
+    <div class="loading" v-else>加载图表中...</div>
+  </div>
+
+    <!-- Tab: 异常滞留 -->
+  <div v-if="activeTab==='abnormal'" class="tab-content">
+    <div v-if="filteredItems.length">
+      <div class="section-header">
+        <h2>⚠️ 异常滞留
+          <span style="font-size:12px;color:var(--text2);font-weight:400">
+            ({{ stats.abnormal_count }}) &nbsp;
+            <span style="color:var(--success)" v-if="processedItems.length">{{ processedItems.length }} 已处理</span>
+          </span>
+        </h2>
+        <div class="section-controls">
+          <input v-model="abnormalSearch" placeholder="🔍 订单号/收件人/单号..."
+                 style="padding:4px 10px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;width:180px;outline:none"
+                 @input="abnormalPage=1">
+          <button class="btn" style="font-size:12px" @click="abnormalPage=1; refresh()">🔄 刷新</button>
+          <button class="btn" style="font-size:12px" @click="exportAbnormalCSV">📥 导出</button>
+        </div>
+      </div>
+
+      <div class="batch-bar" v-if="selectedAbnormal.size > 0">
+        <span class="count">✅ 已选 {{ selectedAbnormal.size }} 单</span>
+        <button class="btn" style="font-size:11px;padding:3px 10px" @click="batchSetStatus('✅ 已签收')">✅ 批量签收</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px" @click="batchSetStatus('❌ 已撤销')">❌ 批量撤销</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px" @click="batchSetStatus('⛔ 已作废')">⛔ 批量作废</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--danger)" @click="selectedAbnormal.clear()">取消选择</button>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="width:32px"><input type="checkbox" class="batch-cb"
+                 :checked="selectedAbnormal.size === activeItems.length && activeItems.length > 0"
+                 @change="toggleSelectAll"></th>
+            <th>订单号</th><th>收件人</th><th>状态</th>
+            <th>创建</th><th>发货人</th><th>国际单号</th><th>操作</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="o in paginatedActiveItems" :key="o.sn"
+                :class="{selected: selectedAbnormal.has(o.sn)}">
+              <td><input type="checkbox" class="batch-cb"
+                   :checked="selectedAbnormal.has(o.sn)"
+                   @change="toggleSelectOne(o.sn)"></td>
+              <td class="mono clickable" style="font-size:11px" @click="viewOrder(o.sn)">{{ o.sn?.slice(-12) }}</td>
+              <td style="font-size:12px">{{ o.consignee }}</td>
+              <td>
+                <span class="badge" :class="abnormalStatusClass(o)"
+                      :title="o.manual_status_updated ? '📅'+o.manual_status_updated : ''">
+                  {{ abnormalDisplayStatus(o) }}
+                </span>
+              </td>
+              <td style="font-size:11px;color:var(--text2)">{{ o.created?.slice(5) }}</td>
+              <td style="font-size:11px">{{ o.sender?.slice(0,6) }}</td>
+              <td class="mono" style="font-size:11px;max-width:100px;overflow:hidden;text-overflow:ellipsis" :title="o.tracking">{{ o.tracking?.slice(0,18) }}</td>
+              <td>
+                <div class="a-acts">
+                  <button class="btn-i" title="查看详情" @click="viewOrder(o.sn)">📋</button>
+                  <button class="btn-i" title="刷新轨迹" @click="refreshOrderTracking(o)"
+                          :disabled="o._refreshing">{{ o._refreshing ? '⏳' : '🔄' }}</button>
+                  <div class="drop-w">
+                    <button class="drop-b" @click.stop="toggleDropdown(o.sn)">▾ 标记</button>
+                    <div class="drop-m" v-if="activeDropdown===o.sn" @click.stop>
+                      <div class="drop-i" :class="{active:o.manual_status==='✅ 已签收'}" @click="setManualStatus(o,'✅ 已签收')">✅ 已签收</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='❌ 已撤销'}" @click="setManualStatus(o,'❌ 已撤销')">❌ 已撤销</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='📦 待出库'}" @click="setManualStatus(o,'📦 待出库')">📦 待出库</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='✈️ 国际运输'}" @click="setManualStatus(o,'✈️ 国际运输')">✈️ 国际运输</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='🛃 清关中'}" @click="setManualStatus(o,'🛃 清关中')">🛃 清关中</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='🚚 国内配送'}" @click="setManualStatus(o,'🚚 国内配送')">🚚 国内配送</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='⛔ 已作废'}" @click="setManualStatus(o,'⛔ 已作废')">⛔ 已作废</div>
+                      <div class="drop-i" :class="{active:o.manual_status==='⚠️ 问题件'}" @click="setManualStatus(o,'⚠️ 问题件')">⚠️ 问题件</div>
+                      <div v-if="o.manual_status" style="border-top:1px solid var(--border);margin:4px 0"></div>
+                      <div v-if="o.manual_status" class="drop-i" @click="setManualStatus(o,'')" style="color:var(--danger)">清除标记</div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination" v-if="activeTotalPages > 1">
+        <button class="btn" style="font-size:11px;padding:3px 10px" :disabled="abnormalPage<=1" @click="abnormalPage--">◀</button>
+        <span style="font-size:12px;color:var(--text2)">{{ abnormalPage }} / {{ activeTotalPages }}</span>
+        <button class="btn" style="font-size:11px;padding:3px 10px" :disabled="abnormalPage>=activeTotalPages" @click="abnormalPage++">▶</button>
+      </div>
+
+      <div v-if="processedItems.length" style="margin-top:12px">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer"
+             @click="showProcessed=!showProcessed">
+          <span>{{ showProcessed ? '▼' : '▶' }}</span>
+          <span style="font-size:13px;color:var(--text2)">已处理 ({{ processedItems.length }})</span>
+        </div>
+        <table v-if="showProcessed" style="opacity:.6">
+          <thead><tr>
+            <th style="width:32px"></th>
+            <th>订单号</th><th>收件人</th><th>状态</th>
+            <th>创建</th><th>发货人</th><th>国际单号</th><th>操作</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="o in processedItems" :key="o.sn">
+              <td></td>
+              <td class="mono" style="font-size:11px">{{ o.sn?.slice(-12) }}</td>
+              <td style="font-size:12px">{{ o.consignee }}</td>
+              <td><span class="badge" :class="abnormalStatusClass(o)">{{ abnormalDisplayStatus(o) }}</span></td>
+              <td style="font-size:11px;color:var(--text2)">{{ o.created?.slice(5) }}</td>
+              <td style="font-size:11px">{{ o.sender?.slice(0,6) }}</td>
+              <td class="mono" style="font-size:11px">{{ o.tracking?.slice(0,18) }}</td>
+              <td><span style="font-size:11px;color:var(--text2)">已处理</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div v-else class="loading">暂无异常订单</div>
+  </div>
+<!-- Tab: 异常对比 -->
+  <div v-if="activeTab==='anomalies'" class="tab-content">
+    <div class="section" v-if="anomalyItems.length">
+      <div class="section-header">
+        <h2>🔍 轨迹双轨对比</h2>
+        <span style="font-size:12px;color:var(--text2)">
+          扫描 {{ anomalyStats.total }} 个在途单号 &nbsp;
+          🟢 {{ anomalyStats.ok }} &nbsp;
+          🟡 {{ anomalyStats.warning }} &nbsp;
+          🔴 {{ anomalyStats.severe }}
+          <span v-if="anomalyStats.scanned_at" style="margin-left:8px">| {{ anomalyStats.scanned_at }}</span>
+        </span>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <div class="stat-card" style="flex:1;min-width:120px;background:#28a74520;border-color:#28a745">
+          <div class="stat-number" style="color:#28a745">{{ anomalyStats.ok }}</div>
+          <div class="stat-label">🟢 一致</div>
+        </div>
+        <div class="stat-card" style="flex:1;min-width:120px;background:#ffc10720;border-color:#ffc107">
+          <div class="stat-number" style="color:#ffc107">{{ anomalyStats.warning }}</div>
+          <div class="stat-label">🟡 注意</div>
+        </div>
+        <div class="stat-card" style="flex:1;min-width:120px;background:#dc354520;border-color:#dc3545">
+          <div class="stat-number" style="color:#dc3545">{{ anomalyStats.severe }}</div>
+          <div class="stat-label">🔴 严重</div>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>订单号</th>
+            <th>国际单号</th>
+            <th>国际状态</th>
+            <th>国内单号</th>
+            <th>国内状态</th>
+            <th>时间差</th>
+            <th>对比</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="a in anomalyItems" :key="a.intl_tracking"
+                :style="{background: a.match==='severe'?'rgba(220,53,69,.08)':a.match==='warning'?'rgba(255,193,7,.05)':''}">
+              <td class="mono clickable" @click="viewOrder(a.order_sn)">{{ a.order_sn }}</td>
+              <td class="mono" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis" :title="a.intl_tracking">{{ a.intl_tracking?.slice(0,28) }}</td>
+              <td><span class="badge" :class="statusClass(a.intl?.status||'')">{{ a.intl?.status || '?' }}</span></td>
+              <td class="mono" style="font-size:11px">{{ a.dom_tracking?.slice(0,22) }}</td>
+              <td><span class="badge" :class="statusClass(a.dom?.status||'')">{{ a.dom?.status || '?' }}</span></td>
+              <td style="font-size:12px">{{ a.time_diff_hours ? a.time_diff_hours+'h' : '-' }}</td>
+              <td>
+                <span v-if="a.match==='severe'" class="badge" style="background:#dc3545;color:#fff">🔴 严重</span>
+                <span v-else-if="a.match==='warning'" class="badge" style="background:#ffc107;color:#333">🟡 注意</span>
+                <span v-else class="badge" style="background:#28a745;color:#fff">🟢 一致</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div v-else-if="anomalyLoading" class="loading">加载中...</div>
+    <div v-else class="loading">暂无对比数据 — 运行 scan_anomalies.py 生成</div>
+  </div>
+
+  <!-- Tab: 已撤销 -->
+  <div v-if="activeTab==='cancelled'" class="tab-content">
+    <div class="section" v-if="stats.cancelled_orders?.length">
+      <div class="section-header">
+        <h2>🗑 已撤销 ({{ stats.cancelled_count }})</h2>
+        <span style="font-size:12px;color:var(--text2)">状态-6 已取消/撤销，不查询轨迹</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>订单号</th><th>收件人</th><th>状态</th><th>创建时间</th><th>发货人</th><th>国际单号</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="o in stats.cancelled_orders" :key="o.sn">
+              <td class="mono clickable" @click="viewOrder(o.sn)">{{ o.sn }}</td>
+              <td>{{ o.consignee }}</td>
+              <td><span class="badge" style="background:rgba(100,116,139,.3);color:var(--text2)">{{ o.state }}</span></td>
+              <td>{{ o.created }}</td>
+              <td>{{ o.sender }}</td>
+              <td class="mono" style="font-size:11px">{{ o.tracking }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div v-else class="loading">暂无已撤销订单</div>
+  </div>
+
+  <!-- Tab: 轨迹 -->
+  <div v-if="activeTab==='tracking'" class="tab-content">
+    <!-- 子Tab切换 -->
+    <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--card);padding:4px;border-radius:8px;border:1px solid var(--border);width:fit-content">
+      <button class="tab-btn" :class="{active:trackingSubTab==='track'}" style="font-size:12px;padding:4px 14px"
+              @click="trackingSubTab='track'">📡 轨迹</button>
+      <button class="tab-btn" :class="{active:trackingSubTab==='orders'}" style="font-size:12px;padding:4px 14px"
+              @click="trackingSubTab='orders';loadRecentOrders()">📋 全部订单</button>
+      <button class="tab-btn" :class="{active:trackingSubTab==='untracked'}" style="font-size:12px;padding:4px 14px"
+              @click="trackingSubTab='untracked';loadUntrackedOrders()">📭 待查<span v-if="untrackedCount" style="margin-left:3px;font-size:10px;background:var(--warn);color:#333;padding:1px 5px;border-radius:8px">{{ untrackedCount }}</span></button>
+    </div>
+
+    <!-- 子Tab: 轨迹 -->
+    <div v-if="trackingSubTab==='track'">
+      <div class="section">
+        <div class="section-header">
+          <h2>📡 轨迹查询结果 ({{ trackingTotal }})</h2>
+          <div class="section-controls">
+            <select v-model="statusFilter" @change="loadTracking">
+              <option value="all">全部状态</option>
+              <option v-for="s in mergedStatuses" :key="s.key" :value="s.key">{{ s.label }} ({{ s.count }})</option>
+            </select>
+            <span style="font-size:12px;color:var(--text2)">每页</span>
+            <select v-model.number="trackPerPage" @change="trackPage=1;loadTracking()" style="font-size:12px;padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;width:60px">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+            <span style="font-size:12px;color:var(--text2);margin-left:4px">第{{ trackPage }}页 / 共{{ Math.ceil(trackingTotal/trackPerPage) }}页</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>国际单号</th><th>订单号</th><th>收件人</th><th>当前状态</th><th>位置</th><th>物流公司</th><th>国内单号</th><th>轨迹数</th><th>查询时间</th><th></th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="r in trackingItems" :key="r.tracking_no">
+                <td class="mono" style="font-size:11px" :title="r.tracking_no">{{ r.tracking_no.length > 25 ? r.tracking_no.slice(0,25)+'...' : r.tracking_no }}</td>
+                <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.order_sn)">{{ r.order_sn }}</td>
+                <td>{{ r.consignee }}</td>
+                <td><span class="badge" :class="statusClass(r.status)">{{ r.status }}</span></td>
+                <td style="font-size:11px">{{ r.location || '-' }}</td>
+                <td>{{ r.company }}</td>
+                <td class="mono" style="font-size:11px">{{ r.domestic_no }}</td>
+                <td>{{ r.detail_count }}</td>
+                <td style="font-size:11px;color:var(--text2)">{{ r.queried_at?.slice(5,16) }}</td>
+                <td style="white-space:nowrap">
+                    <button class="btn" style="padding:2px 8px;font-size:11px" @click="viewDetail(r.tracking_no)">详情</button>
+                    <button class="btn" style="padding:2px 6px;font-size:11px;margin-left:2px;color:var(--accent)" @click="refreshSingleTrack(r.tracking_no)" :title="'刷新轨迹'"
+                     :disabled="refreshingTrack === r.tracking_no">{{ refreshingTrack === r.tracking_no ? '⏳' : '🔄' }}</button>
+                    <select class="status-mark-select" @change="markTrackStatus(r.tracking_no, $event)" style="margin-left:2px;padding:2px 4px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;max-width:60px"
+                      :disabled="markingTrack === r.tracking_no">
+                      <option value="">{{ markingTrack === r.tracking_no ? '⏳...' : '▾标记' }}</option>
+                      <option value="已签收">✅ 已签收</option>
+                      <option value="已撤销">❌ 已撤销</option>
+                      <option value="待出库">📦 待出库</option>
+                      <option value="国际运输">✈️ 国际运输</option>
+                      <option value="清关中">🛃 清关中</option>
+                      <option value="国内配送">🚚 国内配送</option>
+                      <option value="已作废">⛔ 已作废</option>
+                      <option value="问题件">⚠️ 问题件</option>
+                    </select>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" v-if="trackingTotal > trackPerPage">
+          <button class="btn" @click="trackPage > 1 && (trackPage--, loadTracking())" :disabled="trackPage<=1">‹</button>
+          <span>{{ trackPage }} / {{ Math.ceil(trackingTotal/trackPerPage) }}</span>
+          <button class="btn" @click="trackPage < Math.ceil(trackingTotal/trackPerPage) && (trackPage++, loadTracking())" :disabled="trackPage>=Math.ceil(trackingTotal/trackPerPage)">›</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 子Tab: 全部订单（按创建时间降序） -->
+    <div v-if="trackingSubTab==='orders'">
+      <div class="section">
+        <div class="section-header">
+          <h2>📋 全部订单 ({{ recentOrders.length }})</h2>
+          <span style="font-size:12px;color:var(--text2)">按创建时间↓ 最新在前</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>订单号</th><th>收件人</th><th>状态</th><th>线路</th><th>寄件人</th><th>重量</th><th>国际单号</th><th>创建时间</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="r in paginatedRecentOrders" :key="r.sn">
+                <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.sn)">{{ r.sn?.slice(-10) }}</td>
+                <td style="font-size:11px">{{ r.consignee }}</td>
+                <td><span class="badge" :class="statusClass(r.state)">{{ r.state }}</span></td>
+                <td style="font-size:11px">{{ r.line }}</td>
+                <td style="font-size:11px">{{ r.sender }}</td>
+                <td style="font-size:11px">{{ r.weight }}</td>
+                <td class="mono" style="font-size:11px" :title="r.tracking_no">{{ r.tracking_no.length > 20 ? r.tracking_no.slice(0,20)+'...' : r.tracking_no }}</td>
+                <td style="font-size:11px;color:var(--text2)">{{ r.created?.slice(5,16) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" v-if="recentOrders.length > 50" style="margin-top:10px">
+          <button class="btn" @click="recentPage>1 && recentPage--" :disabled="recentPage<=1">‹</button>
+          <span>{{ recentPage }} / {{ Math.ceil(recentOrders.length / 50) }}</span>
+          <button class="btn" @click="recentPage<Math.ceil(recentOrders.length/50) && recentPage++" :disabled="recentPage>=Math.ceil(recentOrders.length/50)">›</button>
+          <span style="font-size:11px;color:var(--text2);margin-left:8px">共 {{ recentOrders.length }} 条</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 子Tab: 待查订单 -->
+    <div v-if="trackingSubTab==='untracked'">
+      <div class="section">
+        <div class="section-header">
+          <h2>📭 待查订单 ({{ untrackedItems.length }})</h2>
+          <span style="font-size:12px;color:var(--text2)">有国际单号但无轨迹记录的订单，可点击🔄直接查</span>
+        </div>
+        <div v-if="untrackedLoading" class="loading">加载中...</div>
+        <div v-else-if="!untrackedItems.length" class="loading" style="color:var(--success)">
+          ✅ 全部已查，没有待查订单
+        </div>
+        <div v-else style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>订单号</th><th>收件人</th><th>寄件人</th><th>状态</th><th>国际单号</th><th>国内单号</th><th>创建时间</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="r in untrackedItems" :key="r.sn">
+                <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.sn)">{{ r.sn }}</td>
+                <td>{{ r.consignee }}</td>
+                <td style="font-size:11px">{{ r.sender }}</td>
+                <td><span class="badge" :class="statusClass(r.state)">{{ r.state }}</span></td>
+                <td class="mono" style="font-size:11px">{{ r.tracking_no?.slice(0,22) || '-' }}</td>
+                <td class="mono" style="font-size:11px">{{ r.domestic_no?.slice(0,18) || '-' }}</td>
+                <td style="font-size:11px;color:var(--text2)">{{ r.created?.slice(5,16) }}</td>
+                <td style="white-space:nowrap">
+                  <button class="btn" style="padding:2px 8px;font-size:11px" :disabled="!r.tracking_no" @click="r.tracking_no && refreshSingleTrack(r.tracking_no, true)">
+                    {{ (!r.tracking_no) ? '—' : (refreshingTrack === r.tracking_no ? '⏳' : '🔄 查轨迹') }}
+                  </button>
+                  <select class="status-mark-select" @change="r.tracking_no && markTrackStatus(r.tracking_no, $event)" style="margin-left:4px;padding:2px 4px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;max-width:60px">
+                    <option value="">▾标记</option>
+                    <option value="已签收">✅ 已签收</option>
+                    <option value="已撤销">❌ 已撤销</option>
+                    <option value="待出库">📦 待出库</option>
+                    <option value="国际运输">✈️ 国际运输</option>
+                    <option value="清关中">🛃 清关中</option>
+                    <option value="国内配送">🚚 国内配送</option>
+                    <option value="已作废">⛔ 已作废</option>
+                    <option value="问题件">⚠️ 问题件</option>
+                  </select>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: 财务 -->
+  <div v-if="activeTab==='finance'" class="tab-content">
+    <div class="loading" v-if="financeLoading">加载财务数据中...</div>
+    <template v-else>
+      <!-- Stats -->
+      <div class="stats" style="margin-bottom:16px">
+        <div class="stat-card">
+          <div class="label">📋 称重补款总笔数</div>
+          <div class="value" style="color:var(--accent)">{{ finance.total_count }}</div>
+          <div class="sub">{{ currentMonth === 'april' ? '2026年4月' : '2026年5月' }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">💰 称重补款总额</div>
+          <div class="value" style="color:var(--danger)">{{ finance.total_amount }} 元</div>
+          <div class="sub negative">从余额扣款</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">📅 涉及天数</div>
+          <div class="value" style="color:var(--warn)">{{ finance.daily?.length || 0 }} 天</div>
+          <div class="sub">日均 {{ (finance.total_count / (finance.daily?.length || 1)).toFixed(0) }} 笔</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">📊 日均金额</div>
+          <div class="value" style="color:var(--text2)">{{ (finance.total_amount / (finance.daily?.length || 1)).toFixed(2) }} 元</div>
+          <div class="sub">平均每天扣款</div>
+        </div>
+      </div>
+      
+      <!-- 刷新按钮 -->
+      <div style="text-align:right;margin-bottom:8px">
+        <button class="btn btn-sm" @click="refreshFinance" :disabled="financeRefreshing" style="font-size:12px;padding:4px 10px">
+          {{ financeRefreshing ? '⏳ 更新中...' : '🔄 更新财务数据' }}
+        </button>
+        <span v-if="financeRefreshMsg" style="font-size:11px;color:var(--text2);margin-left:8px">{{ financeRefreshMsg }}</span>
+      </div>
+
+      <!-- Charts: daily bar + product pie -->
+      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:12px;margin-bottom:20px">
+        <div class="chart-card">
+          <h3>📈 每日补款趋势</h3>
+          <canvas ref="financeChart" style="max-height:240px"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>🧩 产品占比 <span v-if="productStats.pending > 0" style="font-size:11px;color:var(--warn)">⏳{{ productStats.cached }}/{{ productStats.total_orders }}</span></h3>
+          <canvas ref="productPieChart" style="max-height:240px"></canvas>
+        </div>
+      </div>
+
+      <!-- 📋 每日明细表（可折叠） -->
+      <div class="section">
+        <div class="section-header" style="cursor:pointer" @click="showFinanceDaily = !showFinanceDaily">
+          <h2>📋 每日称重补款 ({{ finance.daily?.length || 0 }}天)</h2>
+          <span style="font-size:12px;color:var(--text2)">{{ showFinanceDaily ? '收起 ▲' : '展开 ▼' }}</span>
+        </div>
+        <div v-if="showFinanceDaily && finance.daily?.length" style="overflow-x:auto;margin-top:8px">
+          <table>
+            <thead><tr>
+              <th>日期</th>
+              <th>笔数</th>
+              <th>金额(元)</th>
+              <th>占比</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="d in sortedFinanceDaily" :key="d.date"
+                  :style="{background: Math.abs(d.amount) >= topFinanceThreshold ? 'rgba(220,53,69,.06)' : ''}">
+                <td>{{ d.date.slice(5) }}</td>
+                <td><span class="badge" style="background:rgba(59,130,246,.12);color:#3b82f6;cursor:pointer" @click="openDateDetail(d.date)" :title="'点击查看 '+d.date+' 明细'">{{ d.count }}笔</span></td>
+                <td style="color:var(--danger);font-weight:500">{{ d.amount.toFixed(2) }}</td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <div style="flex:1;height:6px;background:var(--border);border-radius:3px;max-width:100px">
+                      <div :style="{width: Math.abs(d.amount / maxFinanceAmt * 100).toFixed(0)+'%', height:'100%', background:'var(--danger)', borderRadius:'3px'}"></div>
+                    </div>
+                    <span style="font-size:11px;color:var(--text2)">{{ (Math.abs(d.amount) / Math.abs(maxFinanceAmt) * 100).toFixed(0) }}%</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </template>
+  </div>
+
+  <!-- Tab: 超重分析 -->
+  <div v-if="activeTab==='overweight'" class="tab-content">
+    <!-- 子Tab切换 -->
+    <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--card);padding:4px;border-radius:8px;border:1px solid var(--border);width:fit-content">
+      <button class="tab-btn" :class="{active:overweightSubTab==='products'}" style="font-size:12px;padding:4px 14px"
+              @click="overweightSubTab='products';loadOverweight()">📊 产品分析</button>
+      <button class="tab-btn" :class="{active:overweightSubTab=='orders'}" style="font-size:12px;padding:4px 14px"
+              @click="overweightSubTab='orders';loadOverweightOrders()">📦 包裹重量明细</button>
+    </div>
+
+    <!-- 子Tab: 产品分析 -->
+    <div v-if="overweightSubTab==='products'">
+      <div class="section" v-if="overweightData.products?.length">
+        <div class="section-header">
+          <h2>📦 产品超重分析</h2>
+          <span style="font-size:12px;color:var(--text2)">
+            {{ overweightData.summary?.total_products }}个产品 | {{ overweightData.summary?.total_orders }}单 | 总补款 {{ overweightData.summary?.total_surcharge }}元
+          </span>
+          <div style="display:flex;gap:8px">
+            <input v-model="overweightSearch" placeholder="🔍 搜索产品..."
+                   style="font-size:12px;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;width:140px">
+            <select v-model="overweightSort" style="font-size:12px;padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+              <option value="rate">超重率排序</option>
+              <option value="surcharge">补款金额</option>
+              <option value="orders">订单数</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+          <div class="stat-card" style="flex:1;min-width:140px;background:rgba(239,68,68,.08)">
+            <div class="stat-number" style="color:var(--danger)">{{ overweightData.summary?.total_surcharge?.toFixed(0) || 0 }}</div>
+            <div class="stat-label">总补款(元)</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:140px">
+            <div class="stat-number">{{ overweightData.summary?.total_products || 0 }}</div>
+            <div class="stat-label">涉及产品</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:140px">
+            <div class="stat-number">{{ overweightData.summary?.total_orders || 0 }}</div>
+            <div class="stat-label">分析订单</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>产品</th>
+              <th>订单</th>
+              <th>超重</th>
+              <th>超重率</th>
+              <th>总补款</th>
+              <th>均补</th>
+              <th>均重kg</th>
+              <th>打包建议</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="p in sortedOverweightProducts" :key="p.name"
+                  :style="{background: p.rate>=80?'rgba(220,53,69,.06)':p.rate>=60?'rgba(255,193,7,.04)':''}">
+                <td style="font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis" :title="p.name">{{ p.name }}</td>
+                <td>{{ p.orders }}</td>
+                <td>{{ p.surcharged }}</td>
+                <td>
+                  <span :style="{color: p.rate>=80?'var(--danger)':p.rate>=60?'var(--warn)':'var(--text2)'}">{{ p.rate }}%</span>
+                </td>
+                <td style="color:var(--danger);font-weight:500">{{ p.total_surcharge }}</td>
+                <td>{{ p.avg_surcharge }}</td>
+                <td>{{ p.avg_weight_kg }}</td>
+                <td style="font-size:12px">{{ p.advice }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div v-else-if="overweightLoading" class="loading">分析中...</div>
+      <div v-else class="loading">暂无超重数据 — 需产品缓存数据</div>
+    </div>
+
+    <!-- 子Tab: 包裹重量明细 -->
+    <div v-if="overweightSubTab==='orders'">
+      <div class="section" v-if="overweightOrders.length">
+        <div class="section-header">
+          <h2>📦 包裹重量明细</h2>
+          <span style="font-size:12px;color:var(--text2)">有补款排前 | 颜色: ≥2kg🔴 ≥1.5kg🟡</span>
+          <div class="search-box">
+            <input v-model="overweightOrderSearch" placeholder="🔍 搜索订单号..."
+                   style="font-size:12px;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;width:160px">
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>订单号</th>
+              <th>产品</th>
+              <th>重量</th>
+              <th>收件人</th>
+              <th>线路</th>
+              <th>状态</th>
+              <th>补款</th>
+              <th>补款次数</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="o in paginatedOverweightOrders" :key="o.order_sn"
+                  :style="{background: o.has_surcharge ? 'rgba(220,53,69,.04)' : ''}">
+                <td class="mono clickable" style="font-size:11px" @click="viewOrder(o.order_sn)">{{ o.order_sn?.slice(-10) }}</td>
+                <td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis" :title="o.product_name">{{ o.product_name || '-' }}</td>
+                <td :style="{fontWeight:'bold', color: o.weight_g>=2000 ? 'var(--danger)' : o.weight_g>=1500 ? '#f97316' : 'var(--text)'}">
+                  {{ o.weight_kg || o.weight_g ? (o.weight_kg || (o.weight_g/1000).toFixed(1)) + 'kg' : '-' }}
+                </td>
+                <td style="font-size:11px">{{ o.consignee || '-' }}</td>
+                <td style="font-size:11px">{{ o.line || '-' }}</td>
+                <td><span class="badge" :class="statusClass(o.state_name||'')" style="font-size:10px">{{ o.state_name || '-' }}</span></td>
+                <td style="color:var(--danger);font-weight:500">{{ o.total_surcharge?.toFixed(2) || '-' }}</td>
+                <td><span v-if="o.surcharge_count" class="badge" style="background:rgba(239,68,68,.12);color:var(--danger)">{{ o.surcharge_count }}次</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- 分页 -->
+        <div class="pagination" style="margin-top:10px" v-if="overweightOrderTotalPages > 1">
+          <button class="btn" @click="overweightOrderPage>1 && overweightOrderPage--" :disabled="overweightOrderPage<=1">‹</button>
+          <span style="font-size:12px">{{ overweightOrderPage }} / {{ overweightOrderTotalPages }}</span>
+          <button class="btn" @click="overweightOrderPage<overweightOrderTotalPages && overweightOrderPage++" :disabled="overweightOrderPage>=overweightOrderTotalPages">›</button>
+          <span style="font-size:11px;color:var(--text2);margin-left:8px">共 {{ filteredOverweightOrders.length }} 条</span>
+        </div>
+      </div>
+      <div v-else-if="overweightOrderLoading" class="loading">加载中...</div>
+      <div v-else class="loading">暂无重量明细数据</div>
+    </div>
+  </div>
+
+  <!-- Tab: 查询 -->
+  <div v-if="activeTab==='search'" class="tab-content">
+    <!-- 单号实时查轨迹 -->
+    <div class="section" style="margin-bottom:16px">
+      <div class="section-header">
+        <h2>📡 单号查轨迹 <span style="font-size:12px;color:var(--text2);font-weight:400">实时查询货易达Track API</span></h2>
+        <div class="search-box">
+          <input v-model="trackQueryNo" @keyup.enter="doTrackQuery" placeholder="输入国际运单号 DEUHYD...">
+          <button class="btn btn-primary" @click="doTrackQuery" :disabled="trackQueryLoading">{{ trackQueryLoading ? '查询中...' : '查轨迹' }}</button>
+        </div>
+      </div>
+      <!-- 查询结果 -->
+      <div v-if="trackQueryResult && trackQueryResult.found === false" style="padding:12px 0;color:var(--text2)">
+        未找到此运单号: {{ trackQueryNo }} — {{ trackQueryResult.error || '' }}
+      </div>
+      <div v-if="trackQueryResult && trackQueryResult.found === true" style="margin-top:8px">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          <div class="stat-card" style="flex:1;min-width:120px">
+            <div class="stat-label">当前状态</div>
+            <div class="stat-value"><span class="badge" :class="trackStatusBadge(trackQueryResult.status_name)">{{ trackQueryResult.status_name || '—' }}</span></div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:120px">
+            <div class="stat-label">📍 线路</div>
+            <div class="stat-value" style="font-size:14px">{{ trackQueryResult.from_city || '?' }} → {{ trackQueryResult.to_city || '?' }}</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:120px">
+            <div class="stat-label">物流公司</div>
+            <div class="stat-value" style="font-size:14px">{{ trackQueryResult.logistics_company || '—' }}</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:120px">
+            <div class="stat-label">国内单号</div>
+            <div class="stat-value mono" style="font-size:13px;cursor:pointer" @click="copyText(trackQueryResult.domestic_no)" :title="trackQueryResult.domestic_no ? '点击复制' : ''">{{ trackQueryResult.domestic_no || '—' }}</div>
+          </div>
+        </div>
+        <div style="background:var(--bg2);border-radius:8px;padding:12px">
+          <div style="font-size:12px;color:var(--text2);margin-bottom:4px">状态描述</div>
+          <div style="font-size:13px">{{ trackQueryResult.status_text || '暂无描述' }}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:6px">
+            <template v-if="trackQueryResult.status_time">更新时间: {{ trackQueryResult.status_time }}</template>
+            <template v-if="trackQueryResult.weight"> | 重量: {{ trackQueryResult.weight }}</template>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <h2>🔍 运单查询</h2>
+        <div class="search-box">
+          <input v-model="searchQuery" @keyup.enter="doSearch" placeholder="运单号 / 订单号 / 收件人...">
+          <button class="btn btn-primary" @click="doSearch">查询</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto" v-if="searchResults.length">
+        <table>
+          <thead><tr>
+            <th>订单号</th><th>收件人</th><th>状态</th><th>线路</th><th>国际单号</th><th>国内单号</th><th>物流状态</th><th>创建时间</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="r in searchResults" :key="r.order_sn">
+              <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.order_sn)">{{ r.order_sn }}</td>
+              <td>{{ r.consignee }}</td>
+              <td><span class="badge" :class="statusClass(r.state)">{{ r.state }}</span></td>
+              <td style="font-size:12px">{{ r.line }}</td>
+              <td class="mono" style="font-size:11px">{{ r.tracking_no.slice(0,20) }}...</td>
+              <td class="mono" style="font-size:11px">{{ r.domestic_no }}</td>
+              <td><span class="badge" :class="statusClass(r.tracking_status)">{{ r.tracking_status }}</span></td>
+              <td style="font-size:12px">{{ r.created }}</td>
+              <td><button class="btn" style="padding:2px 8px;font-size:11px" @click="viewDetail(r.tracking_no)">轨迹</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else-if="searchDone" class="loading">未找到匹配结果</div>
+      <div v-else class="loading">输入运单号/订单号/收件人查询</div>
+    </div>
+  </div>
+
+  <!-- Detail Modal (Tracking) -->
+  </template>
+
+  <!-- ── Admin Management ── -->
+  <div v-if="auth.loggedIn && auth.role === 'admin' && activeTab === 'admin'" class="tab-content">
+    <!-- 快递100企业版开关 -->
+    <div class="section">
+      <div class="section-header">
+        <h2>📡 物流轨迹异常对比</h2>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;padding:4px 0">
+        <label class="toggle-switch">
+          <input type="checkbox" v-model="kuaidi100Enabled" @change="toggleKuaidi100">
+          <span class="toggle-slider"></span>
+        </label>
+        <div>
+          <div style="font-weight:500">快递100企业版API</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">
+            <template v-if="kuaidi100Enabled">🟢 已开启 — 扫描异常时调用快递100企业版查询国际/国内轨迹进行对比</template>
+            <template v-else>🔴 已关闭 — 仅用货易达缓存数据，不调用快递100</template>
+          </div>
+          <div v-if="kuaidi100Updated" style="font-size:11px;color:var(--text2);margin-top:2px">
+            最后更新: {{ kuaidi100Updated }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <h2>👥 寄件人管理 ({{ adminSenders.length }})</h2>
+        <span style="font-size:12px;color:var(--text2)">点击复制链接发给寄件人</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>寄件人</th><th>总单</th><th>已查</th><th>已签收</th><th>🔴严重</th><th>状态</th><th>最后登录</th><th>操作</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="s in adminSenders" :key="s.name">
+              <td style="font-weight:500">{{ s.name }}</td>
+              <td>{{ s.total_orders }}</td>
+              <td>{{ s.tracked }}</td>
+              <td><span class="status-signed">{{ s.signed }}</span></td>
+              <td><span v-if="s.severe > 0" style="color:var(--danger);font-weight:600">🔴 {{ s.severe }}</span><span v-else style="color:var(--text2)">0</span></td>
+              <td>
+                <select v-model="s.status" @change="toggleSender(s)" style="font-size:12px;padding:2px 6px">
+                  <option value="active">🟢 启用</option>
+                  <option value="disabled">🔴 停用</option>
+                </select>
+              </td>
+              <td style="font-size:11px;color:var(--text2)">{{ s.last_login ? s.last_login.slice(0,16).replace('T',' ') : '从未' }}</td>
+              <td>
+                <button class="btn" style="padding:2px 10px;font-size:11px" @click="generateToken(s.name)">🔗 生成链接</button>
+                <button class="btn" style="padding:2px 10px;font-size:11px;margin-left:4px" @click="setCustomPassword(s.name)">🔑 改密码</button>
+                <button class="btn" style="padding:2px 10px;font-size:11px;margin-left:4px" @click="resetPassword(s.name)">🔄 重置123456</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── After-Sales Tab ── -->
+  <div v-if="auth.loggedIn && activeTab === 'aftersales'" class="tab-content">
+    <!-- Stats -->
+    <div class="stats" style="margin-bottom:16px">
+      <div class="stat-card">
+        <div class="label">🛠 售后总单</div>
+        <div class="value" style="color:var(--warn)">{{ afterSalesStats.total }}</div>
+        <div class="sub">{{ currentMonth==='april'?'4月':'5月' }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">⏳ 待处理</div>
+        <div class="value" style="color:var(--danger)">{{ afterSalesStats.by_status?.['待处理'] || 0 }}</div>
+        <div class="sub negative">需跟进</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">🔄 处理中</div>
+        <div class="value" style="color:var(--accent)">{{ afterSalesStats.by_status?.['处理中'] || 0 }}</div>
+        <div class="sub">进行中</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">✅ 已完成</div>
+        <div class="value" style="color:var(--success)">{{ afterSalesStats.by_status?.['已完成'] || 0 }}</div>
+        <div class="sub positive">已办结</div>
+      </div>
+    </div>
+
+    <!-- 货易达官网实时查询结果 -->
+    <div v-if="trackLiveResult" style="padding:8px 12px;margin-bottom:10px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:6px;font-size:12px;color:var(--text)">
+      <span v-if="trackLiveLoading">⏳ 查询中...</span>
+      <span v-else>{{ trackLiveResult }}</span>
+    </div>
+
+    <!-- 登记表单 -->
+    <div class="section">
+      <div class="section-header" style="cursor:pointer" @click="showAfterSalesForm = !showAfterSalesForm">
+        <h2>📝 {{ showAfterSalesForm ? '收起登记' : '新建售后登记' }}</h2>
+        <span style="font-size:12px;color:var(--text2)">{{ showAfterSalesForm ? '▲ 收起' : '▼ 展开' }}</span>
+      </div>
+      <div v-if="showAfterSalesForm" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:16px">
+        <div style="position:relative">
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">运单号 *</label>
+          <input v-model="afterForm.tracking_no" @input="onTrackingNoChange" placeholder="输入国际或国内运单号" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+          <span v-if="trackingMatchStatus === 'loading'" style="position:absolute;right:8px;top:32px;font-size:11px;color:var(--text2)">⏳ 查找中...</span>
+          <span v-else-if="trackingMatchStatus === 'matched'" style="position:absolute;right:8px;top:32px;font-size:11px;color:var(--success)">✅ 已匹配</span>
+          <span v-else-if="trackingMatchStatus === 'track_api'" style="position:absolute;right:8px;top:32px;font-size:11px;color:var(--accent)">🌐 实时查询（请确认寄件人）</span>
+          <span v-else-if="trackingMatchStatus === 'nomatch' && afterForm.tracking_no" style="position:absolute;right:8px;top:32px;font-size:11px;color:var(--warn)">⚠️ 未匹配到订单</span>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">国际单号 <span v-if="afterForm.intl_tracking_no" style="font-size:10px;color:var(--success)">（自动匹配）</span></label>
+          <input v-model="afterForm.intl_tracking_no" readonly placeholder="自动填充" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:rgba(100,116,139,.15);color:var(--text);font-size:13px;outline:none;cursor:default">
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">寄件人 <span v-if="afterForm.sender_name" style="font-size:10px;color:var(--success)">（自动匹配）</span></label>
+          <input v-model="afterForm.sender_name" readonly placeholder="自动填充" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:rgba(100,116,139,.15);color:var(--text);font-size:13px;outline:none;cursor:default">
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">售后类型 *</label>
+          <select v-model="afterForm.issue_type" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+            <option value="">请选择</option>
+            <option value="破损">📦 破损</option>
+            <option value="错发">❌ 错发</option>
+            <option value="漏发">🔍 漏发</option>
+            <option value="拒收">🚫 拒收</option>
+            <option value="退货">↩️ 退货</option>
+            <option value="丢件">💔 丢件</option>
+            <option value="其他">📋 其他</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">售后金额(元)</label>
+          <input v-model.number="afterForm.amount" type="number" step="0.01" placeholder="0.00" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+        </div>
+        <div style="grid-column:span 2">
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">问题描述 *</label>
+          <textarea v-model="afterForm.description" placeholder="描述售后问题..." rows="3" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none;resize:vertical"></textarea>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">联系方式</label>
+          <input v-model="afterForm.contact_info" placeholder="电话/微信/邮箱" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+          <div style="margin-top:12px;display:flex;gap:8px">
+            <button class="btn btn-primary" @click="submitAfterSales" :disabled="afterSubmitting" style="flex:1;padding:10px">
+              {{ afterSubmitting ? '提交中...' : '✅ 提交登记' }}
+            </button>
+            <button class="btn" @click="resetAfterForm" style="padding:10px">清空</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 售后列表 -->
+    <div class="section">
+      <div class="section-header">
+        <h2>📋 售后记录 ({{ afterSalesTotal }})</h2>
+        <div class="section-controls">
+          <input v-model="afterSalesSearch" @input="onAfterSalesSearch" placeholder="🔍 搜索单号/描述..." style="font-size:12px;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;width:140px">
+          <select v-if="auth.role==='admin'" v-model="afterSalesSenderFilter" @change="afterSalesPage=1;loadAfterSales()" style="font-size:12px;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+            <option value="all">👥 全部寄件人</option>
+            <option v-for="s in afterSalesSenderList" :key="s" :value="s">{{ s }}</option>
+          </select>
+          <select v-model="afterSalesStatusFilter" @change="afterSalesPage=1;loadAfterSales()" style="font-size:12px;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+            <option value="all">全部状态</option>
+            <option value="待处理">⏳ 待处理</option>
+            <option value="处理中">🔄 处理中</option>
+            <option value="已完成">✅ 已完成</option>
+            <option value="已关闭">🔒 已关闭</option>
+          </select>
+          <span style="font-size:12px;color:var(--text2);margin-left:4px">第{{ afterSalesPage }}页 / 共{{ Math.ceil(afterSalesTotal/afterSalesPerPage) || 1 }}页</span>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>#</th>
+            <th>追踪单号</th>
+            <th>物流状态</th>
+            <th>国内单号</th>
+            <th>订单号</th>
+            <th>寄件人</th>
+            <th>类型</th>
+            <th>问题描述</th>
+            <th>金额</th>
+            <th>状态</th>
+            <th>联系方式</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="(s, i) in afterSalesItems" :key="s.id">
+              <td style="font-size:11px;color:var(--text2)">{{ afterSalesPage * afterSalesPerPage - afterSalesPerPage + i + 1 }}</td>
+              <td class="mono clickable" style="font-size:11px" @click="viewDetail(s.tracking_no)" :title="s.tracking_no">{{ s.tracking_no?.slice(0,18) }}<span v-if="s.tracking_no" @click.stop="queryLiveAfterSales(s.tracking_no)" style="cursor:pointer;margin-left:2px;font-size:10px" :title="'货易达官网实时查轨迹'">🌐</span></td>
+              <td>
+                <span v-if="s.current_tracking_status" class="badge" :class="statusClass(s.current_tracking_status)" style="font-size:10px;cursor:pointer" @click="viewDetail(s.intl_tracking_no || s.tracking_no)" :title="'点击查看轨迹'">{{ s.current_tracking_status }}</span>
+                <span v-else style="font-size:11px;color:var(--text2)">-</span>
+              </td>
+              <td style="font-size:11px;position:relative" v-if="s.domestic_tracking_no">
+                <span @click="copyText(s.domestic_tracking_no)" style="cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .2s" :style="lastCopied === s.domestic_tracking_no ? 'background:rgba(34,197,94,.2)' : ''" :title="'点击复制: ' + s.domestic_tracking_no">
+                  🔍 {{ s.domestic_tracking_no.slice(0,18) }}
+                  <span v-if="lastCopied === s.domestic_tracking_no" style="font-size:10px;color:var(--success);margin-left:4px">✅ 已复制</span>
+                  <span v-else style="font-size:10px;color:var(--text2);margin-left:2px">📋</span>
+                </span>
+              </td>
+              <td style="font-size:11px;color:var(--text2)" v-else>-</td>
+              <td class="mono clickable" style="font-size:11px" @click="viewOrder(s.order_sn)" v-if="s.order_sn">{{ s.order_sn?.slice(-10) }}</td>
+              <td style="font-size:11px;color:var(--text2)" v-else>-</td>
+              <td style="font-size:11px;color:var(--accent)">{{ s.sender_name || '-' }}</td>
+              <td><span class="badge" :class="afterSaleTypeClass(s.issue_type)">{{ s.issue_type || '-' }}</span></td>
+              <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="s.description">{{ s.description || '-' }}</td>
+              <td style="font-size:12px;font-weight:500;color:var(--danger)" v-if="s.amount">{{ s.amount.toFixed(2) }}</td>
+              <td style="font-size:12px;color:var(--text2)" v-else>-</td>
+              <td>
+                <span v-if="s.status==='待处理'" class="badge" style="background:var(--danger);color:#fff">{{ s.status }}</span>
+                <span v-else-if="s.status==='处理中'" class="badge" style="background:var(--accent);color:#fff">{{ s.status }}</span>
+                <span v-else-if="s.status==='已完成'" class="badge" style="background:var(--success);color:#fff">{{ s.status }}</span>
+                <span v-else class="badge" style="background:rgba(100,116,139,.3);color:var(--text2)">{{ s.status }}</span>
+              </td>
+              <td style="font-size:11px;color:var(--text2)">{{ s.contact_info || '-' }}</td>
+              <td style="font-size:11px;color:var(--text2)">{{ s.created_at?.slice(5,16) }}</td>
+              <td>
+                <select v-model="s.status" @change="updateAfterSalesStatus(s)" style="font-size:11px;padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+                  <option value="待处理">⏳ 待处理</option>
+                  <option value="处理中">🔄 处理中</option>
+                  <option value="已完成">✅ 已完成</option>
+                  <option value="已关闭">🔒 已关闭</option>
+                </select>
+                <button class="btn" style="padding:1px 6px;font-size:10px;margin-left:4px;color:var(--danger)" @click="deleteAfterSales(s.id)" :title="'删除'">✕</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination" v-if="afterSalesTotal > afterSalesPerPage" style="margin-top:10px">
+        <button class="btn" @click="afterSalesPage>1 && afterSalesPage--" :disabled="afterSalesPage<=1">‹</button>
+        <span>{{ afterSalesPage }} / {{ Math.ceil(afterSalesTotal/afterSalesPerPage) }}</span>
+        <button class="btn" @click="afterSalesPage<Math.ceil(afterSalesTotal/afterSalesPerPage) && afterSalesPage++" :disabled="afterSalesPage>=Math.ceil(afterSalesTotal/afterSalesPerPage)">›</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Todo Tab（待办：未认证身份证）── -->
+  <div v-if="activeTab==='todo'" class="tab-content">
+    <div v-if="todoLoading" class="loading">加载待办数据中...</div>
+    <template v-else>
+      <!-- Stats -->
+      <div class="stats" style="margin-bottom:16px">
+        <div class="stat-card">
+          <div class="label">📋 待办总项</div>
+          <div class="value" style="color:var(--danger)">{{ todoTotal }}</div>
+          <div class="sub">需上传身份证正反面</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">📦 涉及寄件人</div>
+          <div class="value" style="color:var(--warn)">{{ todoSenderCount }}</div>
+          <div class="sub">需要通知处理</div>
+        </div>
+      </div>
+
+      <!-- 隔离提示 -->
+      <div v-if="!todoError && auth.loggedIn && auth.role!=='admin'" style="padding:8px 12px;background:rgba(59,130,246,.1);border-radius:6px;color:var(--accent);font-size:12px;margin-bottom:10px">
+        👤 仅显示 <strong>{{ auth.username }}</strong> 的待办事项
+      </div>
+
+      <div v-if="todoError" style="padding:12px;background:rgba(239,68,68,.1);border-radius:6px;color:var(--danger);font-size:13px">
+        ❌ 无法获取清关数据: {{ todoError }}
+      </div>
+
+      <!-- 按寄件人分组 -->
+      <div v-for="(orders, sender) in todoSenders" :key="sender" class="section" style="margin-bottom:12px">
+        <div class="section-header">
+          <h2>📦 {{ sender }} <span style="font-size:13px;color:var(--text2);margin-left:8px">({{ orders.length }} 人)</span></h2>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>#</th>
+              <th>收件人</th>
+              <th>身份证号</th>
+              <th>国内单号</th>
+              <th>线路</th>
+              <th>运单号</th>
+              <th style="width:70px">操作</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="(o, i) in orders" :key="o.sn" style="font-size:12px">
+                <td style="color:var(--text2)">{{ i+1 }}</td>
+                <td>{{ o.consignee }}</td>
+                <td class="mono" style="font-size:11px">{{ o.id_number }}</td>
+                <td class="mono" style="font-size:11px">{{ o.domestic_no }}</td>
+                <td style="font-size:11px;color:var(--text2)">{{ o.line_name }}</td>
+                <td class="mono" style="font-size:10px;color:var(--text2)">{{ o.global_waybill?.slice(0,20) }}</td>
+                <td>
+                  <button class="btn btn-sm" style="font-size:11px;padding:2px 8px"
+                    @click="openUpload(o)" title="上传身份证正反面">📤</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Modal: 身份证上传 -->
+  <div class="modal-overlay" style="z-index:210" v-if="showUploadModal" @click.self="closeUpload">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <h3>📤 上传身份证正反面</h3>
+        <button class="btn-close" @click="closeUpload">✕</button>
+      </div>
+      <div class="modal-body">
+        <div v-if="uploadResult" style="margin-bottom:16px">
+          <div v-if="uploadResult.success"
+               style="padding:12px;background:rgba(34,197,94,.12);border-radius:6px;color:var(--success)">
+            ✅ {{ uploadResult.msg || '上传成功！' }}
+          </div>
+          <div v-else
+               style="padding:12px;background:rgba(239,68,68,.1);border-radius:6px;color:var(--danger)">
+            ❌ {{ uploadResult.msg || '上传失败' }}
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px;font-size:13px;color:var(--text2)">
+          <div><strong>收件人：</strong>{{ uploadTarget?.consignee }}</div>
+          <div><strong>身份证：</strong>{{ uploadTarget?.id_number }}</div>
+        </div>
+
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:6px;color:var(--text)">
+            📸 身份证正面（人像面）
+          </label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <input type="file" accept="image/jpeg,image/png,image/jpg"
+                   @change="onFrontChange"
+                   style="flex:1;font-size:13px;color:var(--text)">
+            <span v-if="frontPreview" style="font-size:11px;color:var(--success)">✅ 已选</span>
+          </div>
+          <img v-if="frontPreview" :src="frontPreview"
+               style="margin-top:8px;max-height:120px;border-radius:4px;border:1px solid var(--border)">
+        </div>
+
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:6px;color:var(--text)">
+            📸 身份证反面（国徽面）
+          </label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <input type="file" accept="image/jpeg,image/png,image/jpg"
+                   @change="onReverseChange"
+                   style="flex:1;font-size:13px;color:var(--text)">
+            <span v-if="reversePreview" style="font-size:11px;color:var(--success)">✅ 已选</span>
+          </div>
+          <img v-if="reversePreview" :src="reversePreview"
+               style="margin-top:8px;max-height:120px;border-radius:4px;border:1px solid var(--border)">
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px"
+                :disabled="uploading || !frontFile || !reverseFile"
+                @click="doUpload">
+          {{ uploading ? '⏳ 上传中...' : '📤 开始上传' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Tracking Timeline (z-index 200, above anomaly modal's z-index 100) -->
+  <div class="modal-overlay" style="z-index:200" v-if="detailData" @click.self="detailData=null">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>📦 物流轨迹 — {{ detailData.tracking_no?.slice(0,25) }}...</h2>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;color:var(--accent)" @click="refreshDetailTrack" :disabled="detailRefreshing">{{ detailRefreshing ? '⏳ 刷新中...' : '🔄 刷新轨迹' }}</button>
+          <button class="modal-close" @click="detailData=null">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:13px">
+          <div><span style="color:var(--text2)">物流公司:</span> {{ detailData.logisticsCompany || '-' }}</div>
+          <div><span style="color:var(--text2)">国内单号:</span> {{ detailData.extTrackNoCn || '-' }}</div>
+          <div><span style="color:var(--text2)">当前状态:</span>
+            <span class="badge" :class="statusClass(detailData.currentStatus)">{{ detailData.currentStatus }}</span>
+            <span v-if="detailData.domesticComparison?.autoCorrected" style="font-size:11px;color:#a855f7;margin-left:4px">🟣 国内确认修正</span>
+          </div>
+          <div><span style="color:var(--text2)">轨迹:</span> {{ detailData.trackingDetails?.length || 0 }} 条</div>
+        </div>
+        <div v-if="detailData.trackingDetails?.length" class="timeline">
+          <div v-for="(log, i) in detailData.trackingDetails" :key="i"
+               class="timeline-item" :class="statusTimelineClass(log.statusName)">
+            <div class="time">{{ log.trackingTime }}</div>
+            <div class="desc">{{ log.trackingDesc }}</div>
+            <div class="loc" v-if="log.address">📍 {{ log.address }}</div>
+            <div class="loc" v-if="log.currentSiteName">🌍 {{ log.currentSiteName }}</div>
+            <div class="loc" v-if="log.nextSiteName">➡️ 下站: {{ log.nextSiteName }}</div>
+            <div class="loc" v-if="log.signerName">👤 签收: {{ log.signerName }} ({{ log.signerTypeDesc }})</div>
+            <div class="loc" v-if="log.contact">📞 {{ log.contact }} {{ log.contactPhone }}</div>
+          </div>
+        </div>
+        <div v-else style="padding:12px 0;font-size:13px">
+          <div style="margin-bottom:8px"><span style="color:var(--text2)">最新状态:</span> {{ detailData.latestDesc || '暂无轨迹数据' }}</div>
+          <div v-if="detailData.latestDesc" style="color:var(--text2);font-size:12px">{{ detailData.latestTime || '' }}</div>
+        </div>
+
+        <!-- ── 国内单号双轨对比 ── -->
+        <div v-if="detailData.domesticComparison" style="margin-top:16px;border-top:2px solid var(--accent);padding-top:12px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <h4 style="font-size:14px;margin:0">🇨🇳 国内单号对比</h4>
+            <span style="font-size:12px;color:var(--text2)">{{ detailData.domesticComparison.trackingNo }}</span>
+            <span style="font-size:11px;color:var(--text2)">({{ detailData.domesticComparison._source }})</span>
+            <span v-if="detailData.domesticComparison.match==='severe'" class="badge" style="background:#dc3545;color:#fff;margin-left:auto">🔴 严重</span>
+            <span v-if="detailData.domesticComparison.autoCorrected" style="font-size:10px;color:#a855f7;margin-left:4px">已修正</span>
+            <span v-else-if="detailData.domesticComparison.match==='warning'" class="badge" style="background:#ffc107;color:#333;margin-left:auto">🟡 注意</span>
+            <span v-else class="badge" style="background:#28a745;color:#fff;margin-left:auto">🟢 一致</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-bottom:10px">
+            <div>
+              <span style="color:var(--text2)">国际: </span>
+              <span class="badge" :class="statusClass(detailData.currentStatus)">{{ detailData.currentStatus }}</span>
+              <span style="font-size:11px;color:var(--text2);margin-left:4px">{{ detailData.latestTime?.slice(0,16) }}</span>
+            </div>
+            <div>
+              <span style="color:var(--text2)">国内: </span>
+              <span class="badge" :class="statusClass(detailData.domesticComparison.currentStatus)">{{ detailData.domesticComparison.currentStatus }}</span>
+              <span style="font-size:11px;color:var(--text2);margin-left:4px">{{ detailData.domesticComparison.latestTime?.slice(0,16) }}</span>
+            </div>
+          </div>
+          <div v-if="detailData.domesticComparison.timeDiffHours" style="font-size:12px;color:var(--text2);margin-bottom:8px">
+            ⏱ 时间差: {{ detailData.domesticComparison.timeDiffHours }} 小时
+          </div>
+          <div v-if="detailData.domesticComparison.trackingDetails?.length" class="timeline" style="max-height:200px;overflow-y:auto">
+            <div v-for="(log, i) in detailData.domesticComparison.trackingDetails.slice(0,8)" :key="'dom'+i"
+                 class="timeline-item">
+              <div class="time" style="font-size:11px">{{ log.trackingTime }}</div>
+              <div class="desc" style="font-size:12px">{{ log.trackingDesc }}</div>
+              <div class="loc" v-if="log.address" style="font-size:11px">📍 {{ log.address }}</div>
+            </div>
+          </div>
+          <div v-if="detailData.domesticComparison.trackingDetails?.length > 8" style="font-size:11px;color:var(--text2);text-align:center;margin-top:4px">
+            ... 共 {{ detailData.domesticComparison.trackingDetails.length }} 条，显示前8条
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Order Detail Modal -->
+  <div class="modal-overlay" v-if="showAnomalyModal" @click.self="showAnomalyModal = false">
+    <div class="modal" style="max-width:95vw;width:1200px">
+      <div class="modal-header">
+        <h2>🔍 双轨对比 — 国际断更列表</h2>
+        <button class="modal-close" @click="showAnomalyModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- 统计 -->
+        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <div class="stat-card" style="flex:1;min-width:100px;background:#28a74520;border-color:#28a745;cursor:pointer" @click="anomalyFilter='all'" :class="{active: anomalyFilter==='all'}">
+            <div class="stat-number" style="color:#28a745">{{ anomalyStats.total }}</div>
+            <div class="stat-label">📊 全部</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:100px;background:#dc354520;border-color:#dc3545;cursor:pointer" @click="anomalyFilter='severe'" :class="{active: anomalyFilter==='severe'}">
+            <div class="stat-number" style="color:#dc3545">{{ anomalyStats.severe }}</div>
+            <div class="stat-label">🔴 断更</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:100px;background:#ffc10720;border-color:#ffc107;cursor:pointer" @click="anomalyFilter='warning'" :class="{active: anomalyFilter==='warning'}">
+            <div class="stat-number" style="color:#ffc107">{{ anomalyStats.warning }}</div>
+            <div class="stat-label">🟡 注意</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:100px;background:var(--card);border-color:var(--border);cursor:pointer" @click="anomalyFilter='ok'" :class="{active: anomalyFilter==='ok'}">
+            <div class="stat-number" style="color:var(--text)">{{ anomalyStats.ok }}</div>
+            <div class="stat-label">🟢 一致</div>
+          </div>
+        </div>
+
+        <!-- 操作栏 -->
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+          <input v-model="anomalySearch" placeholder="🔍 搜索订单号/国际单号..."
+                 style="flex:1;min-width:160px;font-size:12px;padding:4px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+          <span style="font-size:12px;color:var(--text2);margin-left:4px">排序:</span>
+          <select v-model="anomalySort" style="font-size:12px;padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+            <option value="id">默认顺序</option>
+            <option value="intl_time">国际停滞时间⏳</option>
+            <option value="dom_status">国内状态</option>
+          </select>
+          <span style="font-size:12px;color:var(--text2);margin-left:8px;margin-right:4px">分组:</span>
+          <select v-model="anomalyGroup" style="font-size:12px;padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+            <option value="none">不分组</option>
+            <option value="domestic">按国内快递</option>
+          </select>
+          <button class="btn" style="font-size:12px;margin-left:auto" @click="exportAnomalyCSV">📥 导出 CSV</button>
+          <span v-if="anomalyStats.scanned_at" style="font-size:11px;color:var(--text2)">| 扫描: {{ anomalyStats.scanned_at }}</span>
+        </div>
+
+        <!-- 列表 -->
+        <div style="max-height:55vh;overflow-y:auto">
+          <div v-if="anomalyLoading" class="loading" style="padding:20px">加载中...</div>
+          <template v-else-if="anomalyGroup === 'domestic'">
+            <div v-for="(grp, gidx) in groupedAnomalyItems" :key="gidx" style="margin-bottom:12px">
+              <h4 style="font-size:13px;margin:0 0 6px;padding:6px 10px;background:rgba(59,130,246,.08);border-radius:6px">
+                📦 {{ grp.carrier || '未知' }}
+                <span style="font-size:11px;color:var(--text2);margin-left:6px">{{ grp.items.length }} 单</span>
+              </h4>
+              <table><tbody>
+                <tr v-for="a in grp.items" :key="a.intl_tracking"
+                    :style="anomalyRowStyle(a)"
+                    class="clickable-row" @click="viewDetail(a.intl_tracking)">
+                  <td class="mono" style="font-size:11px" @click.stop="viewOrder(a.order_sn)">{{ a.order_sn?.slice(-10) }}</td>
+                  <td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="a.intl_tracking">{{ a.intl_tracking }}</td>
+                  <td style="font-size:11px">
+                    <span class="badge" :class="statusClass(a.intl?.status||'')" style="font-size:10px">{{ a.intl?.status||'?' }}</span>
+                    <span style="font-size:10px;color:var(--text2);margin-left:4px">{{ a.intl?.latest_time?.slice(5,16)||'' }}</span>
+                  </td>
+                  <td style="font-size:11px">{{ a.dom_tracking?.slice(0,18) }}</td>
+                  <td style="font-size:11px">
+                    <span class="badge" :class="statusClass(a.dom?.status||'')" style="font-size:10px">{{ a.dom?.status||'?' }}</span>
+                  </td>
+                  <td :style="stallDaysStyle(a)">{{ stallDays(a) }}</td>
+                  <td style="font-size:10px">
+                    <span v-if="a.match==='severe'" class="badge" style="background:#dc3545;font-size:9px;padding:1px 4px">断更</span>
+                    <span v-else-if="a.match==='warning'" class="badge" style="background:#ffc107;color:#333;font-size:9px;padding:1px 4px">延迟</span>
+                    <span v-else class="badge" style="background:#28a745;font-size:9px;padding:1px 4px">正常</span>
+                  </td>
+                </tr>
+              </tbody></table>
+            </div>
+          </template>
+          <template v-else-if="paginatedAnomalyItems.length">
+            <table>
+              <thead><tr>
+                <th style="font-size:11px">订单号</th>
+                <th style="font-size:11px">国际单号</th>
+                <th style="font-size:11px">国际状态</th>
+                <th style="font-size:11px">国内单号</th>
+                <th style="font-size:11px">国内状态</th>
+                <th style="font-size:11px">停滞⏳</th>
+                <th style="font-size:11px">对比</th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="a in paginatedAnomalyItems" :key="a.intl_tracking"
+                    :style="anomalyRowStyle(a)"
+                    class="clickable-row" @click="viewDetail(a.intl_tracking)">
+                  <td class="mono" style="font-size:11px" @click.stop="viewOrder(a.order_sn)">{{ a.order_sn?.slice(-10) }}</td>
+                  <td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="a.intl_tracking">{{ a.intl_tracking }}</td>
+                  <td style="font-size:11px">
+                    <span class="badge" :class="statusClass(a.intl?.status||'')" style="font-size:10px">{{ a.intl?.status||'?' }}</span>
+                    <span style="font-size:10px;color:var(--text2);margin-left:4px">{{ a.intl?.latest_time?.slice(5,16)||'' }}</span>
+                  </td>
+                  <td style="font-size:11px">{{ a.dom_tracking?.slice(0,18) }}</td>
+                  <td style="font-size:11px">
+                    <span class="badge" :class="statusClass(a.dom?.status||'')" style="font-size:10px">{{ a.dom?.status||'?' }}</span>
+                  </td>
+                  <td :style="stallDaysStyle(a)">{{ stallDays(a) }}</td>
+                  <td style="font-size:10px">
+                    <span v-if="a.match==='severe'" class="badge" style="background:#dc3545;font-size:9px;padding:1px 4px">断更</span>
+                    <span v-else-if="a.match==='warning'" class="badge" style="background:#ffc107;color:#333;font-size:9px;padding:1px 4px">延迟</span>
+                    <span v-else class="badge" style="background:#28a745;font-size:9px;padding:1px 4px">正常</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <!-- 分页 -->
+            <div class="pagination" style="margin-top:10px">
+              <button class="btn" @click="anomalyPage>1 && anomalyPage--" :disabled="anomalyPage<=1">‹</button>
+              <span style="font-size:12px">{{ anomalyPage }} / {{ anomalyTotalPages }}</span>
+              <button class="btn" @click="anomalyPage<anomalyTotalPages && anomalyPage++" :disabled="anomalyPage>=anomalyTotalPages">›</button>
+              <span style="font-size:11px;color:var(--text2);margin-left:8px">共 {{ searchedAnomalyItems.length }} 条</span>
+            </div>
+          </template>
+          <div v-else class="loading" style="padding:20px">无匹配结果</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Order Detail Modal -->
+  <div class="modal-overlay" v-if="orderDetail" @click.self="orderDetail=null">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>📋 订单明细 — {{ orderDetail.sn }}</h2>
+        <button class="modal-close" @click="orderDetail=null">✕</button>
+      </div>
+      <div class="modal-body">
+        <div v-if="orderLoading" class="loading">加载中...</div>
+        <template v-else>
+          <!-- Basic Info -->
+          <h3 style="font-size:14px;margin-bottom:8px;color:var(--accent)">基本信息</h3>
+          <div class="detail-grid">
+            <div><span>状态:</span> <span class="badge" :class="statusClass(orderDetail.state_name)">{{ orderDetail.state_name }}</span></div>
+            <div><span>线路:</span> {{ orderDetail.line_name }}</div>
+            <div><span>重量:</span> {{ orderDetail.weight_kg }} kg</div>
+            <div><span>创建:</span> {{ orderDetail.created }}</div>
+            <div><span>国际单号:</span> <span class="mono">{{ orderDetail.global_waybill }}</span></div>
+            <div><span>国内单号:</span> <span class="mono">{{ orderDetail.temp_line_sn }}</span></div>
+            <div><span>商家单:</span> {{ orderDetail.merchant_order_sn }}</div>
+            <div><span>平台单:</span> {{ orderDetail.platform_sn }}</div>
+          </div>
+
+          <!-- Sender / Consignee -->
+          <h3 style="font-size:14px;margin:16px 0 8px;color:var(--accent)">收发信息</h3>
+          <div class="detail-grid">
+            <div><span>寄件人:</span> {{ orderDetail.sender_name }}</div>
+            <div><span>寄件电话:</span> {{ orderDetail.sender_tel || '-' }}</div>
+            <div><span>收件人:</span> {{ orderDetail.consignee_name }}</div>
+            <div><span>收件电话:</span> {{ orderDetail.consignee_tel || '-' }}</div>
+            <div><span>身份证:</span> {{ orderDetail.consignee_id || '-' }}</div>
+            <div><span>地址:</span> {{ [orderDetail.consignee_province, orderDetail.consignee_city, orderDetail.consignee_county, orderDetail.consignee_address].filter(Boolean).join(' ') || '-' }}</div>
+          </div>
+
+          <!-- Fees -->
+          <h3 style="font-size:14px;margin:16px 0 8px;color:var(--accent)">费用（元）</h3>
+          <div class="detail-grid">
+            <div><span>运费:</span> ¥{{ orderDetail.fee_ship?.toFixed(2) }}</div>
+            <div><span>关税:</span> ¥{{ orderDetail.fee_customs?.toFixed(2) }}</div>
+            <div><span>保险费:</span> ¥{{ orderDetail.fee_insurance?.toFixed(2) }}</div>
+            <div><span>预估:</span> ¥{{ orderDetail.money_estimate?.toFixed(2) }}</div>
+            <div><span>最终:</span> ¥{{ orderDetail.money_final?.toFixed(2) }}</div>
+          </div>
+
+          <!-- Products -->
+          <h3 style="font-size:14px;margin:16px 0 8px;color:var(--accent)">
+            产品明细 ({{ orderDetail.products?.length || 0 }})
+            <span v-if="!orderDetail.has_full_detail" style="font-size:11px;color:var(--text2);font-weight:400"> (基础数据)</span>
+          </h3>
+          <div v-if="orderDetail.products?.length">
+            <table>
+              <thead><tr>
+                <th>产品名</th><th>英文名</th><th>品牌</th><th>数量</th><th>单价(EUR)</th><th>单价(CNY)</th><th>EAN</th><th>净重(g)</th>
+              </tr></thead>
+              <tbody>
+                <tr v-for="(p, i) in orderDetail.products" :key="i">
+                  <td>{{ p.goods_name }}</td>
+                  <td style="font-size:11px">{{ p.goods_name_en || '-' }}</td>
+                  <td>{{ p.brand || '-' }}</td>
+                  <td>{{ p.num }}</td>
+                  <td>{{ p.price?.toFixed(2) }}</td>
+                  <td>{{ p.price_rmb?.toFixed(2) }}</td>
+                  <td class="mono" style="font-size:11px">{{ p.ean || '-' }}</td>
+                  <td>{{ p.net_weight }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else style="color:var(--text2);font-size:13px">暂无产品明细数据</div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+
+<!-- 每日明细弹窗 -->
+<div class="modal-overlay" v-if="detailModal.show" @click.self="closeDetailModal">
+  <div class="modal" style="max-width:800px">
+    <div class="modal-header">
+      <h2>📋 称重补款明细 — {{ detailModal.date?.slice(5) }}</h2>
+      <button class="modal-close" @click="closeDetailModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div v-if="detailModal.loading" class="loading">⏳ 加载中...</div>
+      <template v-else-if="detailAllRecords.length">
+        <div style="overflow-x:auto;max-height:420px;overflow-y:auto">
+          <table>
+            <thead><tr>
+              <th>时间</th><th>订单号</th><th>金额(元)</th><th>产品</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="r in paginatedDetailRecords" :key="r.order_sn">
+                <td style="font-size:12px;color:var(--text2)">{{ r.time }}</td>
+                <td class="mono clickable" @click="viewOrder(r.order_sn)" style="font-size:12px">{{ r.order_sn }}</td>
+                <td style="color:var(--danger);font-weight:500">{{ r.amount.toFixed(2) }}</td>
+                <td style="font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis" :title="r.product">{{ r.product }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- 分页 -->
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 0;border-top:1px solid var(--border);margin-top:8px">
+          <div style="display:flex;gap:4px;align-items:center">
+            <span style="font-size:12px;color:var(--text2)">每页</span>
+            <select v-model="detailModal.pageSize" @change="detailModal.page=1"
+                    style="font-size:12px;padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+            <span style="font-size:12px;color:var(--text2)">条</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;font-size:13px">
+            <button class="tab-btn small" style="font-size:12px;padding:2px 10px" :disabled="detailModal.page<=1" @click="detailSetPage(1)">«</button>
+            <button class="tab-btn small" style="font-size:12px;padding:2px 10px" :disabled="detailModal.page<=1" @click="detailSetPage(detailModal.page-1)">‹</button>
+            <span style="color:var(--text2);min-width:80px;text-align:center">{{ detailModal.page }} / {{ detailTotalPages }}</span>
+            <button class="tab-btn small" style="font-size:12px;padding:2px 10px" :disabled="detailModal.page>=detailTotalPages" @click="detailSetPage(detailModal.page+1)">›</button>
+            <button class="tab-btn small" style="font-size:12px;padding:2px 10px" :disabled="detailModal.page>=detailTotalPages" @click="detailSetPage(detailTotalPages)">»</button>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:13px;color:var(--text2);padding-top:4px">
+          共 <span style="color:var(--text);font-weight:600">{{ detailAllRecords.length }}</span> 条记录
+          · 合计: <span style="color:var(--danger);font-weight:600">{{ detailAllRecords.reduce((s,r)=>s+Math.abs(r.amount),0).toFixed(2) }} 元</span>
+        </div>
+      </template>
+      <div v-else class="loading">暂无明细数据</div>
+    </div>
+  </div>
+  <!-- Toast -->
+  <div class="toast" :class="'toast-'+toastType" v-if="toastMsg" style="opacity:1">{{ toastMsg }}</div>
+</div>
+
+<script>
+const { createApp, ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } = Vue;
+
+createApp({
+  setup() {
+    // ─── Auth ────────────────────────────────────────────────────────────────
+    const auth = reactive({ loggedIn: false, user: '', role: '', username: '' });
+    const loginUsername = ref('');
+    const loginPassword = ref('');
+    const loginError = ref('');
+    const loginLoading = ref(false);
+    const adminSenders = ref([]);
+    const kuaidi100Enabled = ref(false);
+    const kuaidi100Updated = ref('');
+
+    const doLogin = async () => {
+      if (!loginUsername.value) { loginError.value = '请选择用户名'; return; }
+      if (!loginPassword.value) { loginError.value = '请输入密码'; return; }
+      loginLoading.value = true;
+      loginError.value = '';
+      try {
+        const r = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({username: loginUsername.value, password: loginPassword.value})
+        }).then(r => r.json());
+        if (r.ok) {
+          auth.loggedIn = true;
+          auth.user = r.user;
+          auth.role = r.role;
+          auth.username = r.user;
+          loginPassword.value = '';
+          refresh();
+        } else {
+          loginError.value = r.error || '登录失败';
+        }
+      } catch (e) {
+        loginError.value = '连接后端失败';
+      } finally {
+        loginLoading.value = false;
+      }
+    };
+
+    const doLogout = async () => {
+      await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      auth.loggedIn = false;
+      auth.user = '';
+      auth.role = '';
+      auth.username = '';
+    };
+
+    const checkAuth = async () => {
+      // Check for ?token=xxx in URL
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if (token) {
+        try {
+          const r = await fetch(`/api/auth/token-login?token=${token}`).then(r => r.json());
+          if (r.ok) {
+            auth.loggedIn = true;
+            auth.user = r.user;
+            auth.role = r.role;
+            auth.username = r.user;
+            // Remove token from URL
+            window.history.replaceState({}, '', window.location.pathname);
+          }
+        } catch (e) {}
+      }
+      if (!auth.loggedIn) {
+        try {
+          const r = await fetch('/api/auth/me').then(r => r.json());
+          if (r.logged_in) {
+            auth.loggedIn = true;
+            auth.user = r.user;
+            auth.role = r.role;
+            auth.username = r.user;
+          }
+        } catch (e) {}
+      }
+    };
+
+    // ─── Admin ───────────────────────────────────────────────────────────────
+    const loadAdminSenders = async () => {
+      if (auth.role !== 'admin') return;
+      try {
+        adminSenders.value = await fetch('/api/admin/senders').then(r => r.json());
+      } catch (e) { console.error('load admin senders error', e); }
+      await loadKuaidi100Toggle();
+    };
+
+    // ─── 快递100企业版开关 ──────────────────────────────────────────────────
+    const loadKuaidi100Toggle = async () => {
+      if (auth.role !== 'admin') return;
+      try {
+        const r = await fetch('/api/admin/kuaidi100-toggle').then(r => r.json());
+        kuaidi100Enabled.value = r.enabled || false;
+        kuaidi100Updated.value = r.updated_at || '';
+      } catch (e) { console.error('load kuaidi100 toggle error', e); }
+    };
+
+    const toggleKuaidi100 = async () => {
+      try {
+        const r = await fetch('/api/admin/kuaidi100-toggle', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled: kuaidi100Enabled.value}),
+        }).then(r => r.json());
+        kuaidi100Enabled.value = r.enabled || false;
+        kuaidi100Updated.value = r.updated_at || '';
+      } catch (e) {
+        console.error('toggle kuaidi100 error', e);
+        kuaidi100Enabled.value = !kuaidi100Enabled.value; // revert
+      }
+    };
+
+    const toggleSender = async (s) => {
+      try {
+        await fetch(`/api/admin/senders/${s.name}`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({status: s.status})
+        }).then(r => r.json());
+      } catch (e) { console.error('toggle sender error', e); }
+    };
+
+    const copySenderLink = (name) => {
+      const url = window.location.origin;
+      navigator.clipboard.writeText(`${url} - ${name}`).then(() => {
+        alert(`已复制链接！发给 ${name}：\n\n请访问 ${url}\n用户名: ${name}\n密码: 123456`);
+      }).catch(() => {
+        alert(`请访问 ${url}\n用户名: ${name}\n密码: 123456`);
+      });
+    };
+
+    const resetPassword = async (name) => {
+      if (!confirm(`重置 ${name} 的密码为 123456？`)) return;
+      try {
+        await fetch(`/api/admin/senders/${name}`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({password: '123456'})
+        }).then(r => r.json());
+        alert(`✅ ${name} 密码已重置为 123456`);
+      } catch (e) { alert('重置失败'); }
+    };
+
+    const setCustomPassword = async (name) => {
+      const newPw = prompt(`为 ${name} 设置新密码：`, '');
+      if (!newPw || newPw.length < 4) {
+        if (newPw) alert('密码至少4位');
+        return;
+      }
+      try {
+        await fetch(`/api/admin/senders/${name}`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({password: newPw})
+        }).then(r => r.json());
+        alert(`✅ ${name} 密码已更新`);
+      } catch (e) { alert('设置失败'); }
+    };
+
+    const generateToken = async (name) => {
+      try {
+        const r = await fetch(`/api/admin/senders/${name}/token`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'}
+        }).then(r => r.json());
+        if (r.ok) {
+          const msg = `✅ 分享链接已生成！\n\n发送给 ${name}：\n${r.url}\n\n点击链接自动登录，无需输入密码`;
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(r.url);
+            alert(msg + '\n\n(链接已复制到剪贴板)');
+          } else {
+            alert(msg);
+          }
+        } else {
+          alert('生成失败: ' + (r.error || ''));
+        }
+      } catch (e) { alert('生成失败'); }
+    };
+
+    const stats = ref({
+      total_orders: 0, tracked: 0, untracked: 0,
+      signed_total: 0, signed_international: 0, signed_domestic_only: 0,
+      severe_anomalies: 0,
+      state_distribution: {}, tracking_status: {},
+      weekly_orders: {}, abnormal_count: 0, abnormal_orders: []
+    });
+    const loading = ref(false);
+    const error = ref(null);
+    const batchUpdating = ref(false);
+    const trackRunning = ref(false);
+    const batchBusy = ref(false);
+    const lastCopied = ref('');
+    let copyTimer = 0;
+    const activeDropdown = ref(null);
+    const abnormalSearch = ref('');
+    const abnormalPage = ref(1);
+    const abnormalPerPage = ref(20);
+    const selectedAbnormal = reactive(new Set());
+    const showProcessed = ref(false);
+    const toastMsg = ref('');
+    const toastType = ref('success');
+    let toastTimer = 0;
+    const trackPercent = ref(0);
+    const trackMsg = ref('');
+    const trackPhase = ref('syncing');
+    const trackPhaseIcon = computed(() => ({
+      syncing: '📥', preparing: '🔍', tracking: '🚀', done: '✅'
+    }[trackPhase.value] || '🔄'));
+    const trackPhaseLabel = computed(() => ({
+      syncing: '同步订单', preparing: '筛选订单', tracking: '查询轨迹', done: '完成'
+    }[trackPhase.value] || '处理中'));
+    const trackMsgText = computed(() => trackMsg.value || '处理中…');
+    let trackTimer = null;
+
+    // ─── 订单同步 ───
+    const orderSyncing = ref(false);
+    const orderSyncBusy = ref(false);
+    const orderPercent = ref(0);
+    const orderMsg = ref('');
+    const orderPhase = ref('syncing');
+    const orderPhaseIcon = computed(() => ({
+      syncing: '📥', preparing: '💾', done: '✅'
+    }[orderPhase.value] || '📥'));
+    const orderPhaseLabel = computed(() => ({
+      syncing: '拉取订单', preparing: '写入DB', done: '完成'
+    }[orderPhase.value] || '处理中'));
+    let orderSyncTimer = null;
+
+    const autoRefresh = ref(true);
+    const lastUpdate = ref('');
+    const chartReady = ref(false);
+
+    // Charts refs
+    const stateChart = ref(null);
+    const trackChart = ref(null);
+    const weeklyChart = ref(null);
+    let stateChartInst = null;
+    let trackChartInst = null;
+    let weeklyChartInst = null;
+
+    // Tracking list
+    const trackingItems = ref([]);
+    const trackingTotal = ref(0);
+    const trackPage = ref(1);
+    const trackPerPage = ref(50);
+    const statusFilter = ref('all');
+    const trackingSubTab = ref('track');
+    const recentOrders = ref([]);
+    const recentPage = ref(1);
+
+    // Search
+    const searchQuery = ref('');
+    const searchResults = ref([]);
+    const searchDone = ref(false);
+
+    // 单号查轨迹
+    const trackQueryNo = ref('');
+    const trackQueryResult = ref(null);
+    const trackQueryLoading = ref(false);
+    const doTrackQuery = async () => {
+      const tn = trackQueryNo.value.trim();
+      if (!tn) return;
+      trackQueryLoading.value = true;
+      trackQueryResult.value = null;
+      try {
+        const r = await fetch(`/api/tracking/query-live?tracking_no=${encodeURIComponent(tn)}`).then(r => r.json());
+        trackQueryResult.value = r;
+      } catch (e) {
+        trackQueryResult.value = { found: false, error: '请求失败' };
+      } finally {
+        trackQueryLoading.value = false;
+      }
+    };
+    const trackStatusBadge = (name) => {
+      if (!name) return 'badge-default';
+      if (name.includes('签收') || name.includes('妥投') || name.includes('已完成')) return 'badge-signed';
+      if (name.includes('派件') || name.includes('清关') || name.includes('干线')) return 'badge-warning';
+      if (name.includes('异常') || name.includes('退回') || name.includes('拒签')) return 'badge-severe';
+      return 'badge-default';
+    };
+
+    // Detail modal
+    const detailData = ref(null);
+    const refreshingTrack = ref('');
+    const detailRefreshing = ref(false);
+    const markingTrack = ref('');
+    const untrackedItems = ref([]);
+    const untrackedLoading = ref(false);
+    const untrackedCount = computed(() => untrackedItems.value.length);
+
+    // Order detail modal
+    const orderDetail = ref(null);
+    const orderLoading = ref(false);
+
+    // Active tab
+    const activeTab = ref('overview');
+    const currentMonth = ref('may');
+
+    // Anomaly comparison
+    const anomalyStats = ref({ total: 0, ok: 0, warning: 0, severe: 0, scanned_at: '' });
+    const anomalyItems = ref([]);
+    const anomalyLoading = ref(false);
+
+    // Anomaly modal (方案D)
+    const showAnomalyModal = ref(false);
+    const anomalyFilter = ref('severe');
+    const anomalySort = ref('intl_time');
+    const anomalyGroup = ref('none');
+    const anomalySearch = ref('');
+    const anomalyPage = ref(1);
+    const anomalyPerPage = 50;
+
+    // After-Sales
+    const afterSalesItems = ref([]);
+    const afterSalesTotal = ref(0);
+    const afterSalesStats = ref({ total: 0, by_status: {}, by_type: {} });
+    const trackLiveResult = ref('');  // 货易达官网实时查询结果
+    const trackLiveLoading = ref(false);
+    const afterSalesPage = ref(1);
+    const afterSalesPerPage = 50;
+    const afterSalesStatusFilter = ref('all');
+    const afterSalesSenderFilter = ref('all');
+    const afterSalesSenderList = ref([]);
+    const afterSalesSearch = ref('');
+    let afterSalesSearchTimer = null;
+
+    // ─── Todo（待办：未认证身份证）────────────────────────────
+    const todoSenders = ref({});
+    const todoTotal = ref(0);
+    const todoSenderCount = ref(0);
+    const todoLoading = ref(false);
+    const todoError = ref('');
+    // Upload state
+    const showUploadModal = ref(false);
+    const uploadTarget = ref(null);
+    const frontFile = ref(null);
+    const reverseFile = ref(null);
+    const frontPreview = ref('');
+    const reversePreview = ref('');
+    const uploading = ref(false);
+    const uploadResult = ref(null);
+    const showAfterSalesForm = ref(false);
+    const afterSubmitting = ref(false);
+    const trackingMatchStatus = ref(''); // '' | 'loading' | 'matched' | 'nomatch'
+    const afterForm = ref({ tracking_no: '', intl_tracking_no: '', domestic_tracking_no: '', sender_name: '', order_sn: '', issue_type: '', description: '', amount: 0, contact_info: '' });
+    let trackingLookupTimer = null;
+
+    const onTrackingNoChange = () => {
+      const tn = afterForm.value.tracking_no.trim();
+      // 清空上次匹配结果
+      afterForm.value.intl_tracking_no = '';
+      afterForm.value.domestic_tracking_no = '';
+      afterForm.value.sender_name = '';
+      afterForm.value.order_sn = '';
+      if (!tn) { trackingMatchStatus.value = ''; return; }
+      trackingMatchStatus.value = 'loading';
+      clearTimeout(trackingLookupTimer);
+      trackingLookupTimer = setTimeout(async () => {
+        try {
+          const r = await fetch(`/api/after-sales/lookup-tracking?tracking_no=${encodeURIComponent(tn)}`).then(r => r.json());
+          if (r.matched) {
+            afterForm.value.intl_tracking_no = r.intl_tracking_no || '';
+            afterForm.value.domestic_tracking_no = r.domestic_tracking_no || '';
+            afterForm.value.sender_name = r.sender_name || '';
+            afterForm.value.order_sn = r.order_sn || '';
+            trackingMatchStatus.value = r.track_api ? 'track_api' : 'matched';
+          } else {
+            trackingMatchStatus.value = 'nomatch';
+          }
+        } catch (e) {
+          trackingMatchStatus.value = 'nomatch';
+        }
+      }, 300);
+    };
+
+    const onAfterSalesSearch = () => {
+      clearTimeout(afterSalesSearchTimer);
+      afterSalesSearchTimer = setTimeout(() => {
+        afterSalesPage.value = 1;
+        loadAfterSales();
+      }, 400);
+    };
+
+    const loadAfterSales = async () => {
+      try {
+        const params = new URLSearchParams({ page: afterSalesPage.value, per_page: afterSalesPerPage });
+        const sq = afterSalesSearch.value.trim();
+        if (sq) {
+          params.set('q', sq);
+        } else {
+          params.set('month', currentMonth.value);
+          params.set('status', afterSalesStatusFilter.value);
+          if (afterSalesSenderFilter.value !== 'all') {
+            params.set('sender', afterSalesSenderFilter.value);
+          }
+        }
+        const [listRes, statsRes] = await Promise.all([
+          fetch(`/api/after-sales?${params}`).then(r => r.json()),
+          sq ? Promise.resolve({ total: afterSalesStats.value.total, by_status: afterSalesStats.value.by_status, by_type: afterSalesStats.value.by_type }) : fetch(`/api/after-sales/stats?month=${currentMonth.value}`).then(r => r.json()),
+        ]);
+        afterSalesItems.value = listRes.items || [];
+        afterSalesTotal.value = listRes.total || 0;
+        afterSalesStats.value = statsRes;
+        // 加载寄件人列表
+        if (!afterSalesSenderList.value.length) {
+          const senders = await fetch(`/api/senders?month=${currentMonth.value}`).then(r => r.json());
+          afterSalesSenderList.value = senders.senders || [];
+        }
+      } catch (e) { console.error('load after sales error', e); }
+    };
+
+    const submitAfterSales = async () => {
+      if (!afterForm.value.tracking_no) { alert('请输入运单号'); return; }
+      if (!afterForm.value.issue_type) { alert('请选择售后类型'); return; }
+      if (!afterForm.value.description) { alert('请描述售后问题'); return; }
+      afterSubmitting.value = true;
+      try {
+        const r = await fetch('/api/after-sales', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            tracking_no: afterForm.value.tracking_no,
+            intl_tracking_no: afterForm.value.intl_tracking_no || undefined,
+            domestic_tracking_no: afterForm.value.domestic_tracking_no || undefined,
+            sender_name: afterForm.value.sender_name || undefined,
+            order_sn: afterForm.value.order_sn || undefined,
+            issue_type: afterForm.value.issue_type,
+            description: afterForm.value.description,
+            amount: afterForm.value.amount || 0,
+            contact_info: afterForm.value.contact_info,
+            month: currentMonth.value,
+          }),
+        }).then(r => r.json());
+        if (r.ok) {
+          resetAfterForm();
+          showAfterSalesForm.value = false;
+          loadAfterSales();
+          alert('✅ 售后登记成功');
+        } else { alert('提交失败: ' + (r.detail || '')); }
+      } catch (e) { alert('提交失败'); }
+      finally { afterSubmitting.value = false; }
+    };
+
+    const resetAfterForm = () => {
+      afterForm.value = { tracking_no: '', intl_tracking_no: '', domestic_tracking_no: '', sender_name: '', order_sn: '', issue_type: '', description: '', amount: 0, contact_info: '' };
+      trackingMatchStatus.value = '';
+    };
+
+    const updateAfterSalesStatus = async (s) => {
+      try {
+        const r = await fetch(`/api/after-sales/${s.id}`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ status: s.status }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert('状态更新失败: ' + (err.detail || r.statusText));
+          loadAfterSales();
+          return;
+        }
+        // 局部更新，避免全量重载
+        const idx = afterSalesItems.value.findIndex(i => i.id === s.id);
+        if (idx >= 0) afterSalesItems.value[idx].status = s.status;
+      } catch (e) { console.error('update after sales status error', e); }
+    };
+
+    const deleteAfterSales = async (id) => {
+      if (!confirm('确定删除这条售后记录？')) return;
+      try {
+        const r = await fetch(`/api/after-sales/${id}`, { method: 'DELETE' });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert('删除失败: ' + (err.detail || r.statusText));
+          return;
+        }
+        // 局部删除
+        afterSalesItems.value = afterSalesItems.value.filter(i => i.id !== id);
+        afterSalesTotal.value--;
+      } catch (e) { console.error('delete after sales error', e); }
+    };
+
+    const queryLiveAfterSales = async (trackingNo) => {
+      if (!trackingNo) return;
+      trackLiveLoading.value = true;
+      trackLiveResult.value = '';
+      try {
+        const r = await fetch(`/api/tracking/query-live?tracking_no=${encodeURIComponent(trackingNo)}`).then(r => r.json());
+        if (r.found) {
+          trackLiveResult.value = `🌐 ${r.status_name || '—'} | ${r.status_text?.slice(0,60) || '—'}`;
+        } else {
+          trackLiveResult.value = `❌ ${r.error || '未找到轨迹'}`;
+        }
+      } catch (e) {
+        trackLiveResult.value = '❌ 查询失败';
+      } finally {
+        trackLiveLoading.value = false;
+        // 3秒后自动清除
+        setTimeout(() => { trackLiveResult.value = ''; }, 8000);
+      }
+    };
+
+    const afterSaleTypeClass = (type) => {
+      if (!type) return '';
+      if (type === '破损' || type === '丢件') return 'status-error';
+      if (type === '错发' || type === '漏发' || type === '其他') return 'status-other';
+      if (type === '拒收' || type === '退货') return 'status-other';
+      return '';
+    };
+
+    // Overweight analysis
+    const overweightData = ref({ products: [], summary: {} });
+    const overweightLoading = ref(false);
+    const overweightSubTab = ref('products');
+    const overweightSearch = ref('');
+    const overweightSort = ref('rate');
+    // Overweight orders (包裹重量明细)
+    const overweightOrders = ref([]);
+    const overweightOrderLoading = ref(false);
+    const overweightOrderSearch = ref('');
+    const overweightOrderPage = ref(1);
+    const overweightOrderPerPage = 50;
+
+    // Finance
+    const finance = ref({ total_count: 0, total_amount: 0, daily: [] });
+    const showFinanceDaily = ref(false);
+    const financeLoading = ref(false);
+    const financeRefreshing = ref(false);
+    const financeRefreshMsg = ref('');
+    const financeChart = ref(null);
+    let financeChartInst = null;
+    const financeInitialized = ref(false);
+    // 每日明细弹窗
+    const detailModal = ref({ show: false, date: '', loading: false, records: [], page: 1, pageSize: 20 });
+    const detailAllRecords = ref([]);  // 全量数据
+
+    const paginatedDetailRecords = computed(() => {
+      const p = detailModal.value;
+      if (!p || !Array.isArray(detailAllRecords.value)) return [];
+      const start = (p.page - 1) * p.pageSize;
+      return detailAllRecords.value.slice(start, start + p.pageSize);
+    });
+    const detailTotalPages = computed(() => {
+      if (!Array.isArray(detailAllRecords.value)) return 1;
+      return Math.ceil(detailAllRecords.value.length / detailModal.value.pageSize) || 1;
+    });
+
+    const openDateDetail = async (dateStr) => {
+      detailModal.value.show = true;
+      detailModal.value.date = dateStr;
+      detailModal.value.loading = true;
+      detailModal.value.page = 1;
+      try {
+        const r = await fetch(`/api/finance/daily-detail?date=${dateStr}&month=${currentMonth.value}`).then(r => r.json());
+        detailAllRecords.value = r.today?.records || [];
+      } catch (e) {
+        detailAllRecords.value = [];
+        console.error('load date detail error', e);
+      } finally {
+        detailModal.value.loading = false;
+      }
+    };
+    const closeDetailModal = () => { detailModal.value.show = false; };
+    const detailSetPage = (p) => { if (p >= 1 && p <= detailTotalPages.value) detailModal.value.page = p; };
+
+    const topFinanceDays = computed(() => {
+      if (!finance.value.daily?.length) return [];
+      return [...finance.value.daily].sort((a, b) => b.amount - a.amount).slice(0, 5);
+    });
+
+    const maxFinanceAmt = computed(() => {
+      if (!finance.value.daily?.length) return 1;
+      return Math.max(...finance.value.daily.map(d => Math.abs(d.amount)), 1);
+    });
+
+    const sortedFinanceDaily = computed(() => {
+      if (!finance.value.daily?.length) return [];
+      return [...finance.value.daily].sort((a, b) => b.date.localeCompare(a.date));
+    });
+
+    const topFinanceThreshold = computed(() => {
+      if (!sortedFinanceDaily.value.length) return 0;
+      // 取最高金额的40%作为阈值
+      return Math.abs(sortedFinanceDaily.value[0].amount) * 0.4;
+    });
+
+    const loadFinance = async () => {
+      if (financeInitialized.value) return;
+      financeLoading.value = true;
+      try {
+        const r = await fetch(`/api/finance?month=${currentMonth.value}`).then(r => r.json());
+        finance.value = r;
+        financeInitialized.value = true;
+        await nextTick();
+        renderFinanceCharts();
+      } catch (e) {
+        console.error('load finance error', e);
+      } finally {
+        financeLoading.value = false;
+      }
+    };
+
+    const refreshFinance = async () => {
+      financeRefreshing.value = true;
+      financeRefreshMsg.value = '正在拉取最新财务数据...';
+      try {
+        const r = await fetch(`/api/finance/refresh?month=${currentMonth.value}`, { method: 'POST' }).then(r => r.json());
+        if (r.ok) {
+          financeRefreshMsg.value = `✅ ${r.message}`;
+          // 清除缓存，重新加载
+          financeInitialized.value = false;
+          await loadFinance();
+        } else {
+          financeRefreshMsg.value = `❌ 更新失败: ${r.detail || '未知错误'}`;
+        }
+      } catch (e) {
+        financeRefreshMsg.value = '❌ 网络错误';
+        console.error('refresh finance error', e);
+      } finally {
+        financeRefreshing.value = false;
+        setTimeout(() => { financeRefreshMsg.value = ''; }, 8000);
+      }
+    };
+
+    const loadTodo = async () => {
+      todoLoading.value = true;
+      todoError.value = '';
+      try {
+        const r = await fetch('/api/todo').then(r => r.json());
+        todoSenders.value = r.senders || {};
+        todoTotal.value = r.total || 0;
+        todoSenderCount.value = r.sender_count || 0;
+        if (r.error) todoError.value = r.error;
+      } catch (e) {
+        todoError.value = '网络错误: ' + e.message;
+        console.error('load todo error', e);
+      } finally {
+        todoLoading.value = false;
+      }
+    };
+
+    // ─── 身份证上传 ────────────────────────────────────────────
+    const openUpload = (order) => {
+      uploadTarget.value = order;
+      frontFile.value = null;
+      reverseFile.value = null;
+      frontPreview.value = '';
+      reversePreview.value = '';
+      uploading.value = false;
+      uploadResult.value = null;
+      showUploadModal.value = true;
+    };
+    const closeUpload = () => {
+      showUploadModal.value = false;
+      uploadTarget.value = null;
+    };
+    const onFrontChange = (e) => {
+      const file = e.target.files?.[0];
+      if (!file) { frontFile.value = null; frontPreview.value = ''; return; }
+      if (file.size > 10*1024*1024) { alert('图片不能超过10MB'); e.target.value = ''; return; }
+      frontFile.value = file;
+      const reader = new FileReader();
+      reader.onload = (ev) => { frontPreview.value = ev.target.result; };
+      reader.readAsDataURL(file);
+    };
+    const onReverseChange = (e) => {
+      const file = e.target.files?.[0];
+      if (!file) { reverseFile.value = null; reversePreview.value = ''; return; }
+      if (file.size > 10*1024*1024) { alert('图片不能超过10MB'); e.target.value = ''; return; }
+      reverseFile.value = file;
+      const reader = new FileReader();
+      reader.onload = (ev) => { reversePreview.value = ev.target.result; };
+      reader.readAsDataURL(file);
+    };
+    const doUpload = async () => {
+      if (!frontFile.value || !reverseFile.value) return;
+      uploading.value = true;
+      uploadResult.value = null;
+      try {
+        const fd = new FormData();
+        fd.append('name', uploadTarget.value.consignee);
+        fd.append('id_number', uploadTarget.value.id_number);
+        fd.append('front_image', frontFile.value);
+        fd.append('reverse_image', reverseFile.value);
+        const r = await fetch('/api/todo/upload', { method: 'POST', body: fd }).then(r => r.json());
+        uploadResult.value = { success: r.ok, msg: r.msg || (r.ok ? '上传成功！' : '上传失败') };
+        if (r.ok) {
+          // 上传成功，3秒后关闭弹窗并刷新列表
+          setTimeout(() => {
+            closeUpload();
+            loadTodo();
+          }, 3000);
+        }
+      } catch (e) {
+        uploadResult.value = { success: false, msg: '网络错误: ' + e.message };
+      } finally {
+        uploading.value = false;
+      }
+    };
+
+    const loadAnomalies = async () => {
+      if (anomalyItems.value.length && !anomalyLoading.value) return;
+      anomalyLoading.value = true;
+      try {
+        const r = await fetch(`/api/anomalies?month=${currentMonth.value}`).then(r => r.json());
+        anomalyStats.value = {
+          total: r.total, ok: r.ok, warning: r.warning, severe: r.severe,
+          scanned_at: r.scanned_at
+        };
+        // Sort: severe first
+        anomalyItems.value = (r.items || []).sort((a, b) => {
+          const order = { severe: 0, warning: 1, ok: 2 };
+          return (order[a.match] ?? 3) - (order[b.match] ?? 3);
+        });
+      } catch (e) {
+        console.error('load anomalies error', e);
+      } finally {
+        anomalyLoading.value = false;
+      }
+    };
+
+    const loadAnomalyModal = async () => {
+      anomalyLoading.value = true;
+      try {
+        const r = await fetch(`/api/anomalies?month=${currentMonth.value}`).then(r => r.json());
+        anomalyStats.value = {
+          total: r.total, ok: r.ok, warning: r.warning, severe: r.severe,
+          scanned_at: r.scanned_at
+        };
+        anomalyItems.value = (r.items || []).sort((a, b) => {
+          const order = { severe: 0, warning: 1, ok: 2 };
+          return (order[a.match] ?? 3) - (order[b.match] ?? 3);
+        });
+      } catch (e) {
+        console.error('load anomaly modal error', e);
+      } finally {
+        anomalyLoading.value = false;
+      }
+    };
+
+    const stallDays = (a) => {
+      if (!a.intl?.latest_time) return '-';
+      const t = new Date(a.intl.latest_time);
+      if (isNaN(t.getTime())) return '-';
+      const diff = Math.floor((Date.now() - t.getTime()) / (1000 * 60 * 60 * 24));
+      if (diff === 0) return '今天';
+      if (diff < 0) return '-';
+      return diff + '天';
+    };
+
+    const stallDaysLevel = (a) => {
+      if (!a.intl?.latest_time) return 0;
+      const t = new Date(a.intl.latest_time);
+      if (isNaN(t.getTime())) return 0;
+      const diff = Math.floor((Date.now() - t.getTime()) / (1000 * 60 * 60 * 24));
+      if (diff >= 7) return 2;  // 🔴 >7天
+      if (diff >= 3) return 1;  // 🟡 3-7天
+      return 0;                 // 默认
+    };
+
+    const anomalyRowStyle = (a) => {
+      const severe = a.match === 'severe';
+      const level = stallDaysLevel(a);
+      let bg = severe ? 'rgba(220,53,69,.06)' : a.match === 'warning' ? 'rgba(255,193,7,.04)' : '';
+      if (level === 2) bg = 'rgba(220,53,69,.12)';  // >7天 更红
+      else if (level === 1) bg = 'rgba(255,193,7,.10)';  // 3-7天 橙色
+      return { background: bg, cursor: 'pointer' };
+    };
+
+    const stallDaysStyle = (a) => {
+      const level = stallDaysLevel(a);
+      if (level === 2) return { fontSize: '12px', fontWeight: 'bold', color: '#dc3545' };
+      if (level === 1) return { fontSize: '12px', fontWeight: 'bold', color: '#f97316' };
+      return { fontSize: '10px', color: 'var(--text2)' };
+    };
+
+    const searchedAnomalyItems = computed(() => {
+      let items = sortedAnomalyItems.value;
+      const q = anomalySearch.value.trim().toLowerCase();
+      if (!q) return items;
+      return items.filter(a =>
+        (a.order_sn || '').toLowerCase().includes(q) ||
+        (a.intl_tracking || '').toLowerCase().includes(q) ||
+        (a.dom_tracking || '').toLowerCase().includes(q)
+      );
+    });
+
+    const anomalyTotalPages = computed(() => Math.max(1, Math.ceil(searchedAnomalyItems.value.length / anomalyPerPage)));
+
+    const paginatedAnomalyItems = computed(() => {
+      const start = (anomalyPage.value - 1) * anomalyPerPage;
+      return searchedAnomalyItems.value.slice(start, start + anomalyPerPage);
+    });
+
+    const filteredAnomalyItems = computed(() => {
+      if (anomalyFilter.value === 'all') return anomalyItems.value;
+      return anomalyItems.value.filter(a => a.match === anomalyFilter.value);
+    });
+
+    const sortedAnomalyItems = computed(() => {
+      const items = [...filteredAnomalyItems.value];
+      if (anomalySort.value === 'intl_time') {
+        return items.sort((a, b) => {
+          const ta = a.intl?.latest_time || '';
+          const tb = b.intl?.latest_time || '';
+          return ta.localeCompare(tb); // 最早的在前面（停滞最久）
+        });
+      }
+      if (anomalySort.value === 'dom_status') {
+        const order = { '已签收': 0, '签收': 0, '派件': 1, '运输中': 2, '清关': 3, '其他': 9 };
+        return items.sort((a, b) => {
+          const sa = order[a.dom?.status] ?? 9;
+          const sb = order[b.dom?.status] ?? 9;
+          return sa - sb;
+        });
+      }
+      return items; // 'id': 默认顺序
+    });
+
+    const groupedAnomalyItems = computed(() => {
+      const groups = {};
+      for (const a of searchedAnomalyItems.value) {
+        const carrier = (a.dom?.source || '未知').replace(/^kuaidi100_public\(/, '').replace(/\)$/, '') || '未知';
+        if (!groups[carrier]) groups[carrier] = [];
+        groups[carrier].push(a);
+      }
+      return Object.entries(groups).map(([carrier, items]) => ({ carrier, items }));
+    });
+
+    // 筛选/搜索/排序变化时重置到第一页
+    watch([anomalyFilter, anomalySearch, anomalySort], () => { anomalyPage.value = 1; });
+
+    const exportAnomalyCSV = () => {
+      const headers = ['订单号', '国际单号', '国际状态', '国际最后时间', '国际最后描述', '国内单号', '国内状态', '对比结果', '停滞天数'];
+      const rows = searchedAnomalyItems.value.map(a => [
+        a.order_sn,
+        a.intl_tracking,
+        a.intl?.status || '',
+        a.intl?.latest_time || '',
+        (a.intl?.latest_desc || '').replace(/,/g, '，'),
+        a.dom_tracking,
+        a.dom?.status || '',
+        a.match,
+        stallDays(a)
+      ]);
+      const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `断更对比_${currentMonth.value}_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const loadOverweight = async () => {
+      if (overweightData.value.products?.length && !overweightLoading.value) return;
+      overweightLoading.value = true;
+      try {
+        const r = await fetch(`/api/finance/overweight?month=${currentMonth.value}`).then(r => r.json());
+        overweightData.value = r;
+      } catch (e) {
+        console.error('load overweight error', e);
+      } finally {
+        overweightLoading.value = false;
+      }
+    };
+    // 搜索+排序后的超重产品列表
+    const sortedOverweightProducts = computed(() => {
+      let items = (overweightData.value.products || []).map(p => ({
+        // 映射API字段 → 模板期望的字段名
+        name: p.name,
+        orders: p.order_count || 0,
+        surcharged: p.surcharge_count || 0,
+        total_surcharge: p.surcharge_amount || 0,
+        avg_surcharge: p.order_count ? ((p.surcharge_amount || 0) / p.order_count) : 0,
+        avg_weight_kg: p.avg_weight_kg || 0,
+        rate: p.surcharge_rate || 0,
+        advice: p.suggestion || '',
+      }));
+      const q = overweightSearch.value.trim().toLowerCase();
+      if (q) items = items.filter(p => p.name.toLowerCase().includes(q));
+      const s = overweightSort.value;
+      if (s === 'surcharge') items = [...items].sort((a, b) => Math.abs(b.total_surcharge) - Math.abs(a.total_surcharge));
+      else if (s === 'orders') items = [...items].sort((a, b) => b.orders - a.orders);
+      else items = [...items].sort((a, b) => (b.rate || 0) - (a.rate || 0));
+      return items;
+    });
+
+    // 包裹重量明细
+    const loadOverweightOrders = async () => {
+      if (overweightOrders.value.length && !overweightOrderLoading.value) return;
+      overweightOrderLoading.value = true;
+      try {
+        const r = await fetch(`/api/overweight/orders?month=${currentMonth.value}&page=1&per_page=200`).then(r => r.json());
+        overweightOrders.value = r.items || [];
+      } catch (e) {
+        console.error('load overweight orders error', e);
+      } finally {
+        overweightOrderLoading.value = false;
+      }
+    };
+    const filteredOverweightOrders = computed(() => {
+      const q = overweightOrderSearch.value.trim().toLowerCase();
+      if (!q) return overweightOrders.value;
+      return overweightOrders.value.filter(o => o.order_sn?.includes(q));
+    });
+    const overweightOrderTotalPages = computed(() => Math.max(1, Math.ceil(filteredOverweightOrders.value.length / overweightOrderPerPage)));
+    const paginatedOverweightOrders = computed(() => {
+      const start = (overweightOrderPage.value - 1) * overweightOrderPerPage;
+      return filteredOverweightOrders.value.slice(start, start + overweightOrderPerPage);
+    });
+
+    // 搜索重置分页
+    watch(overweightOrderSearch, () => { overweightOrderPage.value = 1; });
+
+    const renderFinanceChart = () => {
+      const daily = finance.value.daily;
+      if (!daily?.length || !financeChart.value) return;
+      if (financeChartInst) { financeChartInst.destroy(); }
+      const labels = daily.map(d => d.date.slice(5));
+      const amounts = daily.map(d => d.amount);
+      const counts = daily.map(d => d.count);
+      financeChartInst = new Chart(financeChart.value, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: '金额(元)', data: amounts, backgroundColor: '#ef4444', borderRadius: 3, yAxisID: 'y' },
+            { label: '笔数', data: counts, backgroundColor: 'rgba(59,130,246,.5)', borderRadius: 3, yAxisID: 'y1' }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          scales: {
+            y: { beginAtZero: true, grid: { color: 'rgba(51,65,85,.3)' }, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: '金额(元)', color: '#ef4444' } },
+            y1: { beginAtZero: true, position: 'right', grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: '笔数', color: '#3b82f6' } },
+            x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 45 } }
+          },
+          plugins: {
+            legend: { position: 'top', labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 12 } }
+          }
+        }
+      });
+    };
+
+    // ─── 财务: 产品分组折叠 ────────────────────────────────────────────────
+    const orderSearch = ref('');
+    const productStats = ref({ products: [], cached: 0, total_orders: 0, pending: 0 });
+    const productPieChart = ref(null);
+    let productPieChartInst = null;
+    const expanded = ref({});
+
+    const groupedProducts = computed(() => {
+      const list = (productStats.value.products || []).slice().reverse(); // 降序：金额最大在前
+      const q = orderSearch.value.trim();
+      if (!q) return list;
+      return list.filter(pg =>
+        pg.orders?.some(o => o.order_sn.includes(q))
+      );
+    });
+
+    const toggleProduct = (idx) => {
+      expanded.value[idx] = !expanded.value[idx];
+    };
+
+    const loadProductStats = async () => {
+      try {
+        const r = await fetch(`/api/finance/by-product?month=${currentMonth.value}`).then(r => r.json());
+        productStats.value = r;
+        await nextTick();
+        renderFinanceCharts();
+      } catch (e) {
+        console.error('load product stats error', e);
+      }
+    };
+
+    const renderFinanceCharts = () => {
+      // Daily bar chart
+      const daily = finance.value.daily;
+      if (daily?.length && financeChart.value) {
+        if (financeChartInst) financeChartInst.destroy();
+        financeChartInst = new Chart(financeChart.value, {
+          type: 'bar',
+          data: {
+            labels: daily.map(d => d.date.slice(5)),
+            datasets: [
+              { label: '金额(元)', data: daily.map(d => d.amount), backgroundColor: '#ef4444', borderRadius: 3, yAxisID: 'y' },
+              { label: '笔数', data: daily.map(d => d.count), backgroundColor: 'rgba(59,130,246,.5)', borderRadius: 3, yAxisID: 'y1' }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: true,
+            scales: {
+              y: { beginAtZero: true, grid: { color: 'rgba(51,65,85,.3)' }, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: '金额(元)', color: '#ef4444' } },
+              y1: { beginAtZero: true, position: 'right', grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: '笔数', color: '#3b82f6' } },
+              x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 45 } }
+            },
+            plugins: { legend: { position: 'top', labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 12 } } }
+          }
+        });
+      }
+
+      // Product pie chart
+      const products = productStats.value.products || [];
+      if (products.length && productPieChart.value) {
+        if (productPieChartInst) productPieChartInst.destroy();
+        const top = [...products].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 8);
+        const pieColors = ['#ef4444','#f97316','#f59e0b','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
+        const otherAmt = products.slice(8).reduce((s, p) => s + Math.abs(p.amount), 0);
+        const labels = top.map(p => p.name.length > 12 ? p.name.slice(0, 12) + '...' : p.name);
+        const data = top.map(p => Math.abs(p.amount));
+        if (otherAmt > 0) { labels.push('其他'); data.push(otherAmt); }
+        productPieChartInst = new Chart(productPieChart.value, {
+          type: 'doughnut',
+          data: { labels, datasets: [{ data, backgroundColor: [...pieColors.slice(0, top.length), '#475569'], borderWidth: 0 }] },
+          options: {
+            responsive: true, maintainAspectRatio: true,
+            plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 10 } } }
+          }
+        });
+      }
+    };
+
+    let timer = null;
+
+    const getStatusCount = (name) => stats.value.tracking_status[name] || 0;
+    const getStatusPercent = (name) => {
+      const total = stats.value.tracked || 1;
+      return ((stats.value.tracking_status[name] || 0) / total * 100).toFixed(1);
+    };
+    const getSignedPercent = () => {
+      const total = stats.value.tracked || 1;
+      const signed = (stats.value.tracking_status['已签收'] || 0) + (stats.value.tracking_status['签收(国内确认)'] || 0);
+      return (signed / total * 100).toFixed(1);
+    };
+    const mergedStatuses = computed(() => {
+      const raw = { ...stats.value.tracking_status };
+      // 空状态→"待查询"
+      if (raw[''] && raw[''] > 0) {
+        raw['待查询'] = raw[''];
+        delete raw[''];
+      }
+      const domestic = raw['签收(国内确认)'] || 0;
+      if (domestic > 0) {
+        raw['已签收'] = (raw['已签收'] || 0) + domestic;
+        delete raw['签收(国内确认)'];
+      }
+      // 按物流状态分类排序
+      const order = ['待查询', '已签收', '派件', '已清关', '到达', '离开', '运输中', '清关', '配送',
+                     '运单已经创建', '揽收', '在途', '其他', '查询失败', '未知'];
+      return Object.entries(raw)
+        .sort((a, b) => {
+          const ia = order.indexOf(a[0]);
+          const ib = order.indexOf(b[0]);
+          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+        })
+        .map(([key, count]) => ({ key, label: key, count }));
+    });
+    const getTransitCount = () => {
+      // 运输中 = 已查轨迹总数 - 已签收（统一用tracking数据口径）
+      const ts = stats.value.tracking_status || {};
+      const signed = (ts['已签收'] || 0) + (ts['签收(国内确认)'] || 0);
+      return (stats.value.tracked || 0) - signed;
+    };
+
+    const statusClass = (s) => {
+      if (!s || typeof s !== 'string') return 'status-other';
+      if (s.includes('国内确认')) return 'status-confirmed';
+      if (s.includes('签收') || s.includes('成功') || s.includes('完成')) return 'status-signed';
+      if (s.includes('异常') || s.includes('失败') || s.includes('错误') || s.includes('ERROR')) return 'status-error';
+      if (s.includes('清关') || s.includes('配送') || s.includes('运输') || s.includes('派件') || s.includes('在途')) return 'status-transit';
+      return 'status-other';
+    };
+
+    const copyText = (text) => {
+      if (!text) return;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text);
+        } else {
+          // HTTP fallback: 用 textarea 选中复制
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed'; ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        lastCopied.value = text;
+        clearTimeout(copyTimer);
+        copyTimer = setTimeout(() => { lastCopied.value = ''; }, 2000);
+      } catch (e) {
+        console.error('copy failed', e);
+      }
+    };
+    const statusTimelineClass = (s) => {
+      if (s.includes('签收')) return 'signed';
+      if (s.includes('异常') || s.includes('错误')) return 'warn';
+      return '';
+    };
+
+    const refresh = async () => {
+      loading.value = true;
+      error.value = null;
+      try {
+        const [s, t] = await Promise.all([
+          fetch(`/api/stats?month=${currentMonth.value}`).then(r => { if (!r.ok) throw new Error('API error'); return r.json(); }),
+          fetch(`/api/tracking/results?page=${trackPage.value}&per_page=${trackPerPage.value}&status_filter=${statusFilter.value}&month=${currentMonth.value}`).then(r => r.json())
+        ]);
+        stats.value = s;
+        trackingItems.value = t.items;
+        trackingTotal.value = t.total;
+        lastUpdate.value = new Date().toLocaleTimeString('zh-CN');
+        chartReady.value = true;
+        await nextTick();
+        renderCharts();
+        // 刷新待查订单列表（不论在哪个Tab都刷，确保数据最新）
+        if (!untrackedLoading.value) {
+          loadUntrackedOrders();
+        }
+      } catch (e) {
+        error.value = e.message || '连接后端失败';
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    const queryUntracked = async () => {
+      if (!confirm('确定要一键更新所有未签收订单吗？')) return;
+      // 先检查后端是否已有任务在运行
+      try {
+        const st = await fetch('/api/tracking/query-untracked/status').then(r => r.json());
+        if (st.busy) {
+          alert('已有批量查询任务在运行，请等待完成后再试');
+          batchBusy.value = true;
+          return;
+        }
+      } catch (e) {}
+      trackRunning.value = true;
+      trackPercent.value = 0;
+      trackMsg.value = '正在同步订单…';
+      try {
+        const r = await fetch(`/api/tracking/query-untracked?month=${currentMonth.value}`, { method: 'POST' }).then(r => r.json());
+        if (r.ok || r.total !== undefined) {
+          trackMsg.value = '后台批量查询中…';
+          trackPercent.value = 5;
+          pollTrackProgress();
+        } else {
+          trackRunning.value = false;
+          alert(r.detail || r.message || '启动失败');
+        }
+      } catch (e) {
+        trackRunning.value = false;
+        // 429 = 已有任务
+        if (e.message?.includes('429')) {
+          batchBusy.value = true;
+        }
+        error.value = e.message || '连接后端失败';
+      }
+    };
+    const pollTrackProgress = async () => {
+      try {
+        const p = await fetch('/api/tracking/query-untracked/progress').then(r => r.json());
+        trackPercent.value = p.percent || 0;
+        trackMsg.value = p.message || '';
+        trackPhase.value = p.phase || 'tracking';
+        if (p.done || !p.running) {
+          // 保持进度条至少1.5秒让用户看到100%
+          await new Promise(r => setTimeout(r, 1500));
+          trackRunning.value = false;
+          refresh();
+          return;
+        }
+        trackTimer = setTimeout(pollTrackProgress, 1500);
+      } catch (e) {
+        await new Promise(r => setTimeout(r, 1500));
+        trackRunning.value = false;
+      }
+    };
+
+    // ─── 订单同步 ───
+    const syncOrders = async () => {
+      if (!confirm('确定要从货易达官网同步最新订单吗？')) return;
+      try {
+        const st = await fetch('/api/orders/sync/status').then(r => r.json());
+        if (st.busy) {
+          alert('已有订单同步任务在运行');
+          orderSyncBusy.value = true;
+          return;
+        }
+      } catch (e) {}
+      orderSyncing.value = true;
+      orderPercent.value = 0;
+      orderMsg.value = '正在拉取订单…';
+      orderPhase.value = 'syncing';
+      try {
+        const r = await fetch('/api/orders/sync?days=5', { method: 'POST' }).then(r => r.json());
+        if (r.ok) {
+          orderMsg.value = '后台同步中…';
+          pollOrderSyncProgress();
+        } else {
+          orderSyncing.value = false;
+          alert(r.detail || r.message || '启动失败');
+        }
+      } catch (e) {
+        orderSyncing.value = false;
+        if (e.message?.includes('429')) {
+          orderSyncBusy.value = true;
+        }
+        error.value = e.message || '连接后端失败';
+      }
+    };
+    const pollOrderSyncProgress = async () => {
+      try {
+        const p = await fetch('/api/orders/sync/progress').then(r => r.json());
+        orderPercent.value = p.percent || 0;
+        orderMsg.value = p.message || '';
+        orderPhase.value = p.phase || 'syncing';
+        if (p.done || !p.running) {
+          await new Promise(r => setTimeout(r, 1500));
+          orderSyncing.value = false;
+          orderSyncBusy.value = false;
+          refresh();
+          return;
+        }
+        orderSyncTimer = setTimeout(pollOrderSyncProgress, 1500);
+      } catch (e) {
+        await new Promise(r => setTimeout(r, 1500));
+        orderSyncing.value = false;
+        orderSyncBusy.value = false;
+      }
+    };
+
+    const loadTracking = async () => {
+      try {
+        const t = await fetch(`/api/tracking/results?page=${trackPage.value}&per_page=${trackPerPage.value}&status_filter=${statusFilter.value}&month=${currentMonth.value}`).then(r => r.json());
+        trackingItems.value = t.items;
+        trackingTotal.value = t.total;
+      } catch (e) {
+        console.error('load tracking error', e);
+      }
+    };
+
+    const loadRecentOrders = async () => {
+      try {
+        const r = await fetch(`/api/orders/recent?month=${currentMonth.value}&limit=200`).then(r => r.json());
+        recentOrders.value = Array.isArray(r) ? r : [];
+      } catch (e) {
+        recentOrders.value = [];
+        console.error('load recent orders error', e);
+      }
+    };
+    const paginatedRecentOrders = computed(() => {
+      if (!Array.isArray(recentOrders.value)) recentOrders.value = [];
+      const start = (recentPage.value - 1) * 50;
+      return recentOrders.value.slice(start, start + 50);
+    });
+
+    const doSearch = async () => {
+      const q = searchQuery.value.trim();
+      if (q.length < 2) return;
+      searchDone.value = false;
+      try {
+        const r = await fetch(`/api/tracking/search?q=${encodeURIComponent(q)}&month=${currentMonth.value}`).then(r => r.json());
+        searchResults.value = r;
+        searchDone.value = true;
+      } catch (e) {
+        searchResults.value = [];
+        searchDone.value = true;
+      }
+    };
+
+    const viewDetail = async (trackingNo) => {
+      detailData.value = { tracking_no: trackingNo };
+      try {
+        const r = await fetch(`/api/tracking/${encodeURIComponent(trackingNo)}?month=${currentMonth.value}`).then(r => { if (!r.ok) throw new Error(); return r.json(); });
+        const raw = r.tracking || r;
+        // 映射蛇形→驼峰
+        detailData.value = {
+          tracking_no: trackingNo,
+          currentStatus: raw.current_status || raw.currentStatus || '',
+          latestDesc: raw.latest_desc || raw.latestDesc || '',
+          latestTime: raw.latest_time || raw.latestTime || '',
+          extTrackNoCn: raw.ext_track_no_cn || raw.extTrackNoCn || '',
+          logisticsCompany: raw.logisticsCompany || raw.source || guessCarrier(raw.source || '', raw.tracking_no || trackingNo, raw.ext_track_no_cn || ''),
+          trackingDetails: raw.trackingDetails || [],
+          ...raw,
+        };
+      } catch (e) {
+        detailData.value = { tracking_no: trackingNo, currentStatus: '查询失败', trackingDetails: [] };
+      }
+    };
+    // 物流公司猜测（前端版）
+    const guessCarrier = (source, trackingNo, domesticNo) => {
+      if (source) return source;
+      const dn = domesticNo || trackingNo;
+      if (dn.startsWith('JDV')) return '京东快递';
+      if (dn.startsWith('SF')) return '顺丰速运';
+      return '';
+    };
+
+    const refreshSingleTrack = async (trackingNo) => {
+      refreshingTrack.value = trackingNo;
+      try {
+        const r = await fetch(`/api/tracking/${encodeURIComponent(trackingNo)}/refresh?month=${currentMonth.value}`, { method: 'POST' }).then(r => { if (!r.ok) throw new Error(); return r.json(); });
+        // 刷新轨迹列表
+        await loadTracking();
+        // 也刷新待查列表（可能这个单号不再待查了）
+        if (trackingSubTab.value === 'untracked') await loadUntrackedOrders();
+        if (detailData.value?.tracking_no === trackingNo) {
+          const raw3 = r.tracking || r;
+          detailData.value = {
+            tracking_no: trackingNo,
+            currentStatus: raw3.current_status || raw3.currentStatus || '',
+            latestDesc: raw3.latest_desc || raw3.latestDesc || '',
+            latestTime: raw3.latest_time || raw3.latestTime || '',
+            extTrackNoCn: raw3.ext_track_no_cn || raw3.extTrackNoCn || '',
+            logisticsCompany: raw3.logisticsCompany || raw3.source || guessCarrier(raw3.source || '', trackingNo, raw3.ext_track_no_cn || ''),
+            trackingDetails: raw3.trackingDetails || [],
+            ...raw3,
+          };
+        }
+      } catch (e) {
+        console.error('refresh track error', e);
+      } finally {
+        refreshingTrack.value = '';
+      }
+    };
+
+    const loadUntrackedOrders = async () => {
+      untrackedLoading.value = true;
+      try {
+        const r = await fetch(`/api/orders/untracked?month=${currentMonth.value}&_=${Date.now()}`).then(r => { if (!r.ok) throw new Error(); return r.json(); });
+        untrackedItems.value = r;
+      } catch (e) {
+        console.error('load untracked error', e);
+      } finally {
+        untrackedLoading.value = false;
+      }
+    };
+
+    const refreshDetailTrack = async () => {
+      if (!detailData.value?.tracking_no) return;
+      detailRefreshing.value = true;
+      try {
+        const r = await fetch(`/api/tracking/${encodeURIComponent(detailData.value.tracking_no)}/refresh?month=${currentMonth.value}`, { method: 'POST' }).then(r => { if (!r.ok) throw new Error(); return r.json(); });
+        const raw2 = r.tracking || r;
+        detailData.value = {
+          tracking_no: detailData.value.tracking_no,
+          currentStatus: raw2.current_status || raw2.currentStatus || '',
+          latestDesc: raw2.latest_desc || raw2.latestDesc || '',
+          latestTime: raw2.latest_time || raw2.latestTime || '',
+          extTrackNoCn: raw2.ext_track_no_cn || raw2.extTrackNoCn || '',
+          logisticsCompany: raw2.logisticsCompany || raw2.source || guessCarrier(raw2.source || '', raw2.tracking_no || detailData.value.tracking_no, raw2.ext_track_no_cn || ''),
+          trackingDetails: raw2.trackingDetails || [],
+          ...raw2,
+        };
+        await loadTracking();
+      } catch (e) {
+        console.error('refresh detail error', e);
+      } finally {
+        detailRefreshing.value = false;
+      }
+    };
+
+    const markTrackStatus = async (trackingNo, event) => {
+      const status = event.target.value;
+      event.target.value = '';  // 重置下拉框
+      if (!status) return;
+      if (!confirm(`确认将 ${trackingNo.slice(0,20)}... 标记为「${status}」？`)) return;
+      
+      markingTrack.value = trackingNo;
+      try {
+        const r = await fetch(`/api/tracking/${encodeURIComponent(trackingNo)}/status`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({status, month: currentMonth.value})
+        }).then(r => { if (!r.ok) throw new Error(); return r.json(); });
+        
+        if (r.ok) {
+          // 刷新轨迹列表
+          await loadTracking();
+          // 刷新待查列表（可能这个单不再待查了）
+          if (trackingSubTab.value === 'untracked') await loadUntrackedOrders();
+          // ⭐ 同步刷新顶部的统计数据
+          try {
+            const sr = await fetch(`/api/stats?month=${currentMonth.value}`).then(r => r.json());
+            stats.value = sr;
+          } catch (e) {}
+          // 如果详情弹窗开着且是同一个运单，同步更新
+          if (detailData.value?.tracking_no === trackingNo) {
+            detailData.value.currentStatus = status;
+          }
+        }
+      } catch (e) {
+        console.error('mark status error', e);
+      } finally {
+        markingTrack.value = '';
+      }
+    };
+
+    const viewOrder = async (sn) => {
+      orderLoading.value = true;
+      orderDetail.value = null;
+      try {
+        const r = await fetch(`/api/order/${sn}?month=${currentMonth.value}`).then(r => r.json());
+        orderDetail.value = r;
+      } catch (e) {
+        orderDetail.value = { sn, error: '加载失败' };
+      } finally {
+        orderLoading.value = false;
+      }
+    };
+
+    const toggleDropdown = (sn) => {
+      activeDropdown.value = activeDropdown.value === sn ? null : sn;
+    };
+    const abnormalDisplayStatus = (o) => {
+      if (o.manual_status) return o.manual_status;
+      if (o.state) return o.state;
+      return '?';
+    };
+    const abnormalStatusClass = (o) => {
+      const s = o.manual_status || o.state || '';
+      if (!s) return 'status-other';
+      if (s.includes('签收') || s.includes('✅')) return 'status-signed';
+      if (s.includes('撤销') || s.includes('作废') || s.includes('❌') || s.includes('⛔')) return 'status-error';
+      if (s.includes('问题件') || s.includes('⚠️')) return 'status-error';
+      if (s.includes('清关') || s.includes('配送') || s.includes('运输') || s.includes('出库') || s.includes('✈️') || s.includes('🚚') || s.includes('📦')) return 'status-transit';
+      return 'status-other';
+    };
+    const setManualStatus = async (o, status) => {
+      activeDropdown.value = null;
+      try {
+        const r = await fetch('/api/orders/manual-status', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ sn: o.sn, status, month: currentMonth.value })
+        }).then(r => r.json());
+        if (r.ok) {
+          o.manual_status = status || undefined;
+          o.manual_status_updated = new Date().toLocaleString();
+        }
+      } catch (e) {
+        console.error('设置状态失败', e);
+      }
+    };
+    const refreshOrderTracking = async (o) => {
+      if (o._refreshing) return;
+      o._refreshing = true;
+      const tracking = o.tracking;
+      if (!tracking) { o._refreshing = false; showToast('订单无国际单号', 'error'); return; }
+      try {
+        const resp = await fetch(`/api/tracking/${encodeURIComponent(tracking)}/refresh?month=${currentMonth.value}`, { method: 'POST' }).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+        // 自动把最新物流状态写到状态栏
+        const s = resp.current_status || '';
+        const emojiMap = {
+          '已签收': '✅ 已签收',
+          '签收': '✅ 已签收',
+          '已撤销': '❌ 已撤销',
+          '待出库': '📦 待出库',
+          '运单已经创建': '📦 待出库',
+          '已揽收': '✈️ 国际运输',
+          '国际运输': '✈️ 国际运输',
+          '运输中': '✈️ 国际运输',
+          '在途': '✈️ 国际运输',
+          '清关中': '🛃 清关中',
+          '清关': '🛃 清关中',
+          '已清关': '🛃 清关中',
+          '到达': '🚚 国内配送',
+          '国内配送': '🚚 国内配送',
+          '配送中': '🚚 国内配送',
+          '派件': '🚚 国内配送',
+          '已作废': '⛔ 已作废',
+          '问题件': '⚠️ 问题件',
+          '异常': '⚠️ 问题件',
+        };
+        let mapped = '';
+        for (const [key, val] of Object.entries(emojiMap)) {
+          if (s.includes(key)) { mapped = val; break; }
+        }
+        if (mapped && mapped !== o.manual_status) {
+          await fetch('/api/orders/manual-status', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ sn: o.sn, status: mapped, month: currentMonth.value })
+          }).then(r => r.json());
+          o.manual_status = mapped;
+          o.manual_status_updated = new Date().toLocaleString();
+          showToast('✅ 自动标记: ' + mapped, 'success');
+        } else if (mapped) {
+          showToast('✅ 轨迹已刷新(状态未变)', 'info');
+        } else {
+          showToast('✅ 轨迹已刷新: ' + (resp.latest_desc || '').slice(0,30), 'success');
+        }
+        viewDetail(tracking);
+        await refresh();
+      } catch (e) {
+        showToast('❌ 刷新失败: ' + e.message, 'error');
+        console.error('刷新轨迹失败', e);
+      } finally {
+        o._refreshing = false;
+      }
+    };
+
+    const filteredItems = computed(() => {
+      let items = [...(stats.value.abnormal_orders || [])];
+      const q = abnormalSearch.value.toLowerCase().trim();
+      if (q) {
+        items = items.filter(o =>
+          (o.sn || '').toLowerCase().includes(q) ||
+          (o.consignee || '').toLowerCase().includes(q) ||
+          (o.tracking || '').toLowerCase().includes(q)
+        );
+      }
+      return items;
+    });
+    const activeItems = computed(() =>
+      filteredItems.value.filter(o => {
+        const s = o.manual_status || o.state || '';
+        return !s.includes('\u7b7e\u6536') && !s.includes('\u64a4\u9500') && !s.includes('\u4f5c\u5e9f');
+      })
+    );
+    const processedItems = computed(() =>
+      filteredItems.value.filter(o => {
+        const s = o.manual_status || o.state || '';
+        return s.includes('\u7b7e\u6536') || s.includes('\u64a4\u9500') || s.includes('\u4f5c\u5e9f');
+      })
+    );
+    const activeTotalPages = computed(() => Math.max(1, Math.ceil(activeItems.value.length / abnormalPerPage.value)));
+    const paginatedActiveItems = computed(() => {
+      const start = (abnormalPage.value - 1) * abnormalPerPage.value;
+      return activeItems.value.slice(start, start + abnormalPerPage.value);
+    });
+    const toggleSelectAll = () => {
+      if (selectedAbnormal.size === activeItems.value.length) {
+        selectedAbnormal.clear();
+      } else {
+        activeItems.value.forEach(o => selectedAbnormal.add(o.sn));
+      }
+    };
+    const toggleSelectOne = (sn) => {
+      if (selectedAbnormal.has(sn)) selectedAbnormal.delete(sn);
+      else selectedAbnormal.add(sn);
+    };
+    const batchSetStatus = async (status) => {
+      const sns = [...selectedAbnormal];
+      if (!sns.length) return;
+      let ok = 0, fail = 0;
+      for (const sn of sns) {
+        try {
+          const r = await fetch('/api/orders/manual-status', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ sn, status, month: currentMonth.value })
+          }).then(r => r.json());
+          if (r.ok) ok++; else fail++;
+        } catch (e) { fail++; }
+      }
+      selectedAbnormal.clear();
+      showToast(`\u6279\u91cf\u6807\u8bb0\u5b8c\u6210: ${ok}\u6210\u529f, ${fail}\u5931\u8d25`, fail ? 'error' : 'success');
+      await refresh();
+    };
+    const exportAbnormalCSV = () => {
+      const items = filteredItems.value;
+      if (!items.length) return;
+      let csv = '\u8ba2\u5355\u53f7,\u6536\u4ef6\u4eba,\u72b6\u6001,\u521b\u5efa\u65f6\u95f4,\u53d1\u8d27\u4eba,\u56fd\u9645\u5355\u53f7,\u624b\u52a8\u6807\u8bb0,\u6807\u8bb0\u65f6\u95f4\n';
+      items.forEach(o => {
+        const row = [o.sn, o.consignee, o.state, o.created, o.sender, o.tracking, o.manual_status||'', o.manual_status_updated||''];
+        csv += row.map(v => '"'+(v||'').replace(/"/g,'""')+'"').join(',') + '\n';
+      });
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `\u5f02\u5e38\u6ede\u7559_${currentMonth.value}_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast(`\u5bfc\u51fa ${items.length} \u6761\u8bb0\u5f55`, 'success');
+    };
+    const showToast = (msg, type = 'success') => {
+      toastMsg.value = msg;
+      toastType.value = type;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toastMsg.value = ''; }, 3000);
+    };
+
+    const switchTab = () => {
+      // Re-render charts when switching to overview
+      if (activeTab.value === 'overview' && chartReady.value) {
+        nextTick(() => renderCharts());
+      }
+    };
+
+    const renderCharts = () => {
+      // State distribution donut
+      const sd = stats.value.state_distribution || {};
+      const labels1 = Object.keys(sd);
+      const data1 = Object.values(sd);
+      const colors = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#64748b'];
+      if (stateChartInst) { stateChartInst.destroy(); }
+      if (stateChart.value) {
+        stateChartInst = new Chart(stateChart.value, {
+          type: 'doughnut',
+          data: { labels: labels1, datasets: [{ data: data1, backgroundColor: colors, borderWidth: 0 }] },
+          options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } } }
+        });
+      }
+
+      // Tracking status donut
+      const ts = stats.value.tracking_status || {};
+      const labels2 = Object.keys(ts);
+      const data2 = Object.values(ts);
+      if (trackChartInst) { trackChartInst.destroy(); }
+      if (trackChart.value) {
+        trackChartInst = new Chart(trackChart.value, {
+          type: 'doughnut',
+          data: { labels: labels2, datasets: [{ data: data2, backgroundColor: ['#22c55e','#3b82f6','#f59e0b','#a855f7','#ef4444','#64748b'], borderWidth: 0 }] },
+          options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } } }
+        });
+      }
+
+      // Weekly bar
+      const wo = stats.value.weekly_orders || {};
+      const labels3 = Object.keys(wo);
+      const data3 = Object.values(wo);
+      if (weeklyChartInst) { weeklyChartInst.destroy(); }
+      if (weeklyChart.value) {
+        weeklyChartInst = new Chart(weeklyChart.value, {
+          type: 'bar',
+          data: { labels: labels3, datasets: [{ data: data3, backgroundColor: '#3b82f6', borderRadius: 4 }] },
+          options: { responsive: true, maintainAspectRatio: true,
+            scales: { y: { beginAtZero: true, grid: { color: 'rgba(51,65,85,.3)' }, ticks: { color: '#94a3b8', font: { size: 11 } } },
+                     x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } } },
+            plugins: { legend: { display: false } }
+          }
+        });
+      }
+    };
+
+    const toggleAutoRefresh = () => { autoRefresh.value = !autoRefresh.value; };
+
+    const switchMonth = () => {
+      // Reset caches and reload everything
+      financeInitialized.value = false;
+      finance.value = { total_count: 0, total_amount: 0, daily: [] };
+      productStats.value = { products: [], cached: 0, total_orders: 0, pending: 0 };
+      overweightData.value = { products: [], summary: {} };
+      overweightOrders.value = [];
+      overweightOrderPage.value = 1;
+      recentOrders.value = [];
+      recentPage.value = 1;
+      expanded.value = {};
+      refresh();
+      loadFinance();
+      loadProductStats();
+    };
+
+    watch(autoRefresh, (v) => {
+      if (timer) clearInterval(timer);
+      if (v) timer = setInterval(refresh, 15000);
+    });
+
+    const closeDropdown = (e) => { if (!e.target.closest('.status-dropdown-wrap')) activeDropdown.value = null; };
+
+    onMounted(async () => {
+      document.addEventListener('click', closeDropdown);
+      await checkAuth();
+      if (auth.loggedIn) {
+        refresh();
+        if (autoRefresh.value) timer = setInterval(refresh, 15000);
+        // 页面加载时检查后端是否有批量查询任务在运行
+        try {
+          const st = await fetch('/api/tracking/query-untracked/status').then(r => r.json());
+          batchBusy.value = st.busy;
+        } catch (e) {}
+        // 如果有，开始轮询进度
+        if (batchBusy.value) {
+          trackRunning.value = true;
+          pollTrackProgress();
+        }
+      }
+    });
+
+    onUnmounted(() => {
+      document.removeEventListener('click', closeDropdown);
+      if (timer) clearInterval(timer);
+    });
+
+    return {
+      // Auth
+      auth, loginUsername, loginPassword, loginError, loginLoading,
+      doLogin, doLogout,
+      // Admin
+      adminSenders, loadAdminSenders, toggleSender, copySenderLink, resetPassword, setCustomPassword, generateToken,
+      kuaidi100Enabled, kuaidi100Updated, toggleKuaidi100, loadKuaidi100Toggle,
+      // Dashboard
+      stats, loading, error, autoRefresh, lastUpdate, chartReady,
+      stateChart, trackChart, weeklyChart,
+      trackingItems, trackingTotal, trackPage, trackPerPage, statusFilter,
+      trackingSubTab, recentOrders, recentPage, loadRecentOrders, paginatedRecentOrders,
+      untrackedItems, untrackedLoading, untrackedCount, loadUntrackedOrders,
+      searchQuery, searchResults, searchDone,
+      trackQueryNo, trackQueryResult, trackQueryLoading,
+      doTrackQuery, trackStatusBadge,
+      detailData, refreshingTrack, detailRefreshing, markingTrack,
+      orderDetail, orderLoading,
+      activeTab,
+      currentMonth, switchMonth,
+      finance, financeLoading, financeChart, orderSearch, financeRefreshing, financeRefreshMsg,
+      loadFinance, refreshFinance, loadProductStats, productStats, productPieChart,
+      showFinanceDaily, sortedFinanceDaily, topFinanceThreshold,
+      expanded, groupedProducts, toggleProduct,
+      anomalyStats, anomalyItems, anomalyLoading, loadAnomalies,
+      mergedStatuses,
+      getSignedPercent,
+      showAnomalyModal, anomalyFilter, anomalySort, anomalyGroup,
+      anomalySearch, anomalyPage, anomalyPerPage, anomalyTotalPages,
+      loadAnomalyModal, stallDays, sortedAnomalyItems, groupedAnomalyItems, exportAnomalyCSV,
+      anomalyRowStyle, stallDaysStyle, searchedAnomalyItems, paginatedAnomalyItems,
+      overweightData, overweightLoading, loadOverweight,
+      overweightSubTab, overweightSearch, overweightSort, sortedOverweightProducts,
+      overweightOrders, overweightOrderLoading, loadOverweightOrders,
+      overweightOrderSearch, overweightOrderPage, overweightOrderTotalPages,
+      paginatedOverweightOrders, filteredOverweightOrders,
+      detailModal, paginatedDetailRecords, detailTotalPages,
+      openDateDetail, closeDetailModal, detailSetPage, detailAllRecords,
+      getStatusCount, getStatusPercent, getTransitCount,
+      trackRunning, batchBusy, lastCopied, trackPercent, trackPhase, trackPhaseIcon, trackPhaseLabel, trackMsgText,
+      orderSyncing, orderSyncBusy, orderPercent, orderPhase, orderPhaseIcon, orderPhaseLabel, orderMsg, syncOrders,
+      statusClass, copyText, statusTimelineClass,
+      activeDropdown, toggleDropdown, abnormalDisplayStatus, abnormalStatusClass, setManualStatus, refreshOrderTracking,
+      abnormalSearch, abnormalPage, abnormalPerPage, selectedAbnormal, showProcessed, toastMsg, toastType,
+      filteredItems, activeItems, processedItems, activeTotalPages, paginatedActiveItems,
+      toggleSelectAll, toggleSelectOne, batchSetStatus, exportAbnormalCSV, showToast,
+      refresh, loadTracking, doSearch, viewDetail, refreshSingleTrack, refreshDetailTrack, markTrackStatus, viewOrder, switchTab, toggleAutoRefresh, queryUntracked,
+      afterSalesItems, afterSalesTotal, afterSalesStats, afterSalesPage, afterSalesPerPage,
+      afterSalesStatusFilter, afterSalesSenderFilter, afterSalesSenderList, afterForm, showAfterSalesForm, afterSubmitting,
+      trackingMatchStatus, onTrackingNoChange,
+      loadAfterSales, submitAfterSales, resetAfterForm, updateAfterSalesStatus,
+      deleteAfterSales, afterSaleTypeClass, batchUpdating,
+      // Todo
+      todoSenders, todoTotal, todoSenderCount, todoLoading, todoError,
+      loadTodo,
+      // Upload
+      showUploadModal, uploadTarget,
+      frontFile, reverseFile, frontPreview, reversePreview,
+      uploading, uploadResult,
+      openUpload, closeUpload, onFrontChange, onReverseChange, doUpload,
+    };
+  }
+}).mount('#app');
+</script></div>
+</body>
+</html>
