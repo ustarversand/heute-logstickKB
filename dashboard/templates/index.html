@@ -1,8 +1,12 @@
+ustar-heute-dashboard
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>货易达物流看板</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -32,7 +36,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .clickable:hover { color: var(--accent); text-decoration-color: var(--accent); }
 
 /* Stats Cards */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.stats > .stat-card { flex: 1 1 180px; min-width: 180px; max-width: 100%; }
 .anomaly-banner { display:flex; align-items:center; gap:10px; padding:10px 16px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:10px; margin-bottom:16px; cursor:pointer; font-size:13px; color:var(--text); transition:background .2s; }
 .anomaly-banner:hover { background:rgba(239,68,68,0.2); }
 .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
@@ -66,6 +71,16 @@ tr:hover td { background: rgba(59,130,246,.05); }
 .status-error { color: var(--danger); }
 .status-other { color: var(--warn); }
 .status-confirmed { color: #a855f7; }  /* 紫色：国内确认签收 */
+
+/* Row-level state colors */
+.row-签收, .row-已签收, .row-signed { background: rgba(59,130,246,.03); }
+.row-international { background: rgba(34,197,94,.03); }
+.row-domestic { background: rgba(245,158,11,.03); }
+.row-pending { background: rgba(148,163,184,.03); }
+.row-customs { background: rgba(168,85,247,.03); }
+.row-issue { background: rgba(239,68,68,.04); }
+.row-cancelled, .row-voided { opacity: .5; }
+tr:hover.row-cancelled td, tr:hover.row-voided td { opacity: 1; }
 
 /* ─── 手动状态下拉菜单 ─── */
 .status-dropdown-wrap { position: relative; display: inline-block; }
@@ -135,7 +150,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
            border-bottom: 2px solid transparent; transition: .2s; white-space: nowrap; }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.tab-content { animation: fadeIn .25s ease; }
+.tab-content { }
 .loading { text-align: center; padding: 40px; color: var(--text2); font-size: 14px; }
 .error-bar { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3); border-radius: 8px;
              padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: var(--danger); }
@@ -301,12 +316,16 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
       <span style="color:var(--accent);font-weight:500">👤 {{ auth.username }}</span>
       <button class="btn" @click="doLogout" style="font-size:12px;padding:4px 12px">退出</button>
       <select v-model="currentMonth" @change="switchMonth" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
-        <option value="april">📅 2026年4月</option>
-        <option value="may">📅 2026年5月</option>
+        <option v-for="m in monthOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
       </select>
-      <span>🔄 {{ autoRefresh ? '自动刷新中' : '手动' }}</span>
+      <span>🔄 {{ autoRefresh !== 'off' ? '自动刷新(' + autoRefresh + ')' : '手动' }}</span>
       <span>⏱ {{ lastUpdate }}</span>
-      <button class="btn" @click="toggleAutoRefresh">{{ autoRefresh ? '暂停' : '自动' }}</button>
+      <select v-model="autoRefresh" @change="toggleAutoRefresh" style="padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:11px;outline:none">
+        <option value="off">⏸ 关</option>
+        <option value="15s">⚡ 15s</option>
+        <option value="30s">🔄 30s</option>
+        <option value="60s">🕐 60s</option>
+      </select>
       <button class="btn btn-primary" @click="refresh" :disabled="loading">刷新</button>
       <button class="btn btn-warning" @click="queryUntracked" :disabled="loading || batchUpdating || trackRunning || batchBusy">{{ trackRunning ? '⏳ 查询中...' : (batchBusy ? '🔒 任务运行中' : '一键更新') }}</button>
       <button class="btn" @click="syncOrders" :disabled="orderSyncing || orderSyncBusy"
@@ -363,7 +382,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
     <div class="stat-card">
       <div class="label">📋 总订单</div>
       <div class="value" style="color:var(--accent)">{{ stats.total_orders }}</div>
-      <div class="sub">{{ auth.role==='admin' ? '全部寄件人' : auth.username }} | {{ currentMonth==='april'?'4月':'5月' }}</div>
+      <div class="sub">{{ auth.role==='admin' ? '全部寄件人' : auth.username }} | {{ monthLabelShort }}</div>
     </div>
     <div class="stat-card">
       <div class="label">📡 已查轨迹</div>
@@ -400,9 +419,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   <div class="tabs">
     <button class="tab-btn" :class="{active:activeTab==='overview'}" @click="activeTab='overview';switchTab()">📊 概览</button>
     <button class="tab-btn" :class="{active:activeTab==='abnormal'}" @click="activeTab='abnormal'">⚠️ 异常 ({{ stats.abnormal_count }})</button>
-    <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='anomalies'}" @click="activeTab='anomalies';loadAnomalies()">🔍 对比 ({{ anomalyStats.severe || 0 }})</button>
-    <button class="tab-btn" :class="{active:activeTab==='cancelled'}" @click="activeTab='cancelled'">🗑 已撤销 ({{ stats.cancelled_count }})</button>
-    <button class="tab-btn" :class="{active:activeTab==='tracking'}" @click="activeTab='tracking';loadTracking()">📡 轨迹 ({{ stats.tracked }})</button>
+    <button class="tab-btn" :class="{active:activeTab==='tracking'}" @click="activeTab='tracking';loadOrders()">📡 订单 ({{ stats.tracked }})</button>
     <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='finance'}" @click="activeTab='finance';loadFinance();loadProductStats()">💰 财务</button>
     <button v-if="auth.role==='admin'" class="tab-btn" :class="{active:activeTab==='overweight'}" @click="activeTab='overweight';loadOverweight()">📦 超重</button>
     <button class="tab-btn" :class="{active:activeTab==='search'}" @click="activeTab='search'">🔍 查询</button>
@@ -412,7 +429,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
   <!-- Tab: 概览 -->
-  <div v-if="activeTab==='overview'" class="tab-content">
+  <div v-show="activeTab==='overview'" class="tab-content">
     <div class="charts" v-if="chartReady">
       <div class="chart-card">
         <h3>订单状态分布</h3>
@@ -431,7 +448,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
     <!-- Tab: 异常滞留 -->
-  <div v-if="activeTab==='abnormal'" class="tab-content">
+  <div v-show="activeTab==='abnormal'" class="tab-content">
     <div v-if="filteredItems.length">
       <div class="section-header">
         <h2>⚠️ 异常滞留
@@ -546,7 +563,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
     <div v-else class="loading">暂无异常订单</div>
   </div>
 <!-- Tab: 异常对比 -->
-  <div v-if="activeTab==='anomalies'" class="tab-content">
+  <div v-show="activeTab==='anomalies'" class="tab-content">
     <div class="section" v-if="anomalyItems.length">
       <div class="section-header">
         <h2>🔍 轨迹双轨对比</h2>
@@ -607,7 +624,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
   <!-- Tab: 已撤销 -->
-  <div v-if="activeTab==='cancelled'" class="tab-content">
+  <div v-show="activeTab==='cancelled'" class="tab-content">
     <div class="section" v-if="stats.cancelled_orders?.length">
       <div class="section-header">
         <h2>🗑 已撤销 ({{ stats.cancelled_count }})</h2>
@@ -635,167 +652,276 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
   <!-- Tab: 轨迹 -->
-  <div v-if="activeTab==='tracking'" class="tab-content">
-    <!-- 子Tab切换 -->
-    <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--card);padding:4px;border-radius:8px;border:1px solid var(--border);width:fit-content">
-      <button class="tab-btn" :class="{active:trackingSubTab==='track'}" style="font-size:12px;padding:4px 14px"
-              @click="trackingSubTab='track'">📡 轨迹</button>
-      <button class="tab-btn" :class="{active:trackingSubTab==='orders'}" style="font-size:12px;padding:4px 14px"
-              @click="trackingSubTab='orders';loadRecentOrders()">📋 全部订单</button>
-      <button class="tab-btn" :class="{active:trackingSubTab==='untracked'}" style="font-size:12px;padding:4px 14px"
-              @click="trackingSubTab='untracked';loadUntrackedOrders()">📭 待查<span v-if="untrackedCount" style="margin-left:3px;font-size:10px;background:var(--warn);color:#333;padding:1px 5px;border-radius:8px">{{ untrackedCount }}</span></button>
-    </div>
-
-    <!-- 子Tab: 轨迹 -->
-    <div v-if="trackingSubTab==='track'">
-      <div class="section">
-        <div class="section-header">
-          <h2>📡 轨迹查询结果 ({{ trackingTotal }})</h2>
-          <div class="section-controls">
-            <select v-model="statusFilter" @change="loadTracking">
-              <option value="all">全部状态</option>
-              <option v-for="s in mergedStatuses" :key="s.key" :value="s.key">{{ s.label }} ({{ s.count }})</option>
-            </select>
-            <span style="font-size:12px;color:var(--text2)">每页</span>
-            <select v-model.number="trackPerPage" @change="trackPage=1;loadTracking()" style="font-size:12px;padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;width:60px">
-              <option :value="10">10</option>
-              <option :value="20">20</option>
-              <option :value="50">50</option>
-            </select>
-            <span style="font-size:12px;color:var(--text2);margin-left:4px">第{{ trackPage }}页 / 共{{ Math.ceil(trackingTotal/trackPerPage) }}页</span>
-          </div>
-        </div>
-        <div style="overflow-x:auto">
-          <table>
-            <thead><tr>
-              <th>国际单号</th><th>订单号</th><th>收件人</th><th>当前状态</th><th>位置</th><th>物流公司</th><th>国内单号</th><th>轨迹数</th><th>查询时间</th><th></th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="r in trackingItems" :key="r.tracking_no">
-                <td class="mono" style="font-size:11px" :title="r.tracking_no">{{ r.tracking_no.length > 25 ? r.tracking_no.slice(0,25)+'...' : r.tracking_no }}</td>
-                <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.order_sn)">{{ r.order_sn }}</td>
-                <td>{{ r.consignee }}</td>
-                <td><span class="badge" :class="statusClass(r.status)">{{ r.status }}</span></td>
-                <td style="font-size:11px">{{ r.location || '-' }}</td>
-                <td>{{ r.company }}</td>
-                <td class="mono" style="font-size:11px">{{ r.domestic_no }}</td>
-                <td>{{ r.detail_count }}</td>
-                <td style="font-size:11px;color:var(--text2)">{{ r.queried_at?.slice(5,16) }}</td>
-                <td style="white-space:nowrap">
-                    <button class="btn" style="padding:2px 8px;font-size:11px" @click="viewDetail(r.tracking_no)">详情</button>
-                    <button class="btn" style="padding:2px 6px;font-size:11px;margin-left:2px;color:var(--accent)" @click="refreshSingleTrack(r.tracking_no)" :title="'刷新轨迹'"
-                     :disabled="refreshingTrack === r.tracking_no">{{ refreshingTrack === r.tracking_no ? '⏳' : '🔄' }}</button>
-                    <select class="status-mark-select" @change="markTrackStatus(r.tracking_no, $event)" style="margin-left:2px;padding:2px 4px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;max-width:60px"
-                      :disabled="markingTrack === r.tracking_no">
-                      <option value="">{{ markingTrack === r.tracking_no ? '⏳...' : '▾标记' }}</option>
-                      <option value="已签收">✅ 已签收</option>
-                      <option value="已撤销">❌ 已撤销</option>
-                      <option value="待出库">📦 待出库</option>
-                      <option value="国际运输">✈️ 国际运输</option>
-                      <option value="清关中">🛃 清关中</option>
-                      <option value="国内配送">🚚 国内配送</option>
-                      <option value="已作废">⛔ 已作废</option>
-                      <option value="问题件">⚠️ 问题件</option>
-                    </select>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination" v-if="trackingTotal > trackPerPage">
-          <button class="btn" @click="trackPage > 1 && (trackPage--, loadTracking())" :disabled="trackPage<=1">‹</button>
-          <span>{{ trackPage }} / {{ Math.ceil(trackingTotal/trackPerPage) }}</span>
-          <button class="btn" @click="trackPage < Math.ceil(trackingTotal/trackPerPage) && (trackPage++, loadTracking())" :disabled="trackPage>=Math.ceil(trackingTotal/trackPerPage)">›</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 子Tab: 全部订单（按创建时间降序） -->
-    <div v-if="trackingSubTab==='orders'">
-      <div class="section">
-        <div class="section-header">
-          <h2>📋 全部订单 ({{ recentOrders.length }})</h2>
-          <span style="font-size:12px;color:var(--text2)">按创建时间↓ 最新在前</span>
-        </div>
-        <div style="overflow-x:auto">
-          <table>
-            <thead><tr>
-              <th>订单号</th><th>收件人</th><th>状态</th><th>线路</th><th>寄件人</th><th>重量</th><th>国际单号</th><th>创建时间</th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="r in paginatedRecentOrders" :key="r.sn">
-                <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.sn)">{{ r.sn?.slice(-10) }}</td>
-                <td style="font-size:11px">{{ r.consignee }}</td>
-                <td><span class="badge" :class="statusClass(r.state)">{{ r.state }}</span></td>
-                <td style="font-size:11px">{{ r.line }}</td>
-                <td style="font-size:11px">{{ r.sender }}</td>
-                <td style="font-size:11px">{{ r.weight }}</td>
-                <td class="mono" style="font-size:11px" :title="r.tracking_no">{{ r.tracking_no.length > 20 ? r.tracking_no.slice(0,20)+'...' : r.tracking_no }}</td>
-                <td style="font-size:11px;color:var(--text2)">{{ r.created?.slice(5,16) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination" v-if="recentOrders.length > 50" style="margin-top:10px">
-          <button class="btn" @click="recentPage>1 && recentPage--" :disabled="recentPage<=1">‹</button>
-          <span>{{ recentPage }} / {{ Math.ceil(recentOrders.length / 50) }}</span>
-          <button class="btn" @click="recentPage<Math.ceil(recentOrders.length/50) && recentPage++" :disabled="recentPage>=Math.ceil(recentOrders.length/50)">›</button>
-          <span style="font-size:11px;color:var(--text2);margin-left:8px">共 {{ recentOrders.length }} 条</span>
-        </div>
-      </div>
-    </div>
+  <div v-show="activeTab==='tracking'" class="tab-content">
+    <!-- 订单管理中心：统一视图 -->
     
-    <!-- 子Tab: 待查订单 -->
-    <div v-if="trackingSubTab==='untracked'">
-      <div class="section">
-        <div class="section-header">
-          <h2>📭 待查订单 ({{ untrackedItems.length }})</h2>
-          <span style="font-size:12px;color:var(--text2)">有国际单号但无轨迹记录的订单，可点击🔄直接查</span>
+    <!-- 统计行 -->
+    <div class="stats" style="margin-bottom:12px;gap:4px">
+      <div class="stat-card" style="padding:8px 10px;min-width:0;flex-shrink:0" @click="orderFilterStatus='';loadOrders()">
+        <div class="label">全部订单</div>
+        <div class="value" style="font-size:18px">{{ orderStats.total }}</div>
+        <div class="sub" style="font-size:10px">已加载 {{ orderItems.length }}/{{ orderStats.total }} 单</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='待入库';loadOrders()">
+        <div class="label">待入库</div>
+        <div class="value" style="font-size:16px;color:var(--warn)">{{ orderStats.byStatus['待入库'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='国际运输';loadOrders()">
+        <div class="label">国际运输</div>
+        <div class="value" style="font-size:16px;color:var(--accent)">{{ orderStats.byStatus['国际运输'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='国内配送';loadOrders()">
+        <div class="label">国内配送</div>
+        <div class="value" style="font-size:16px;color:var(--accent)">{{ orderStats.byStatus['国内配送'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='已签收';loadOrders()">
+        <div class="label">已签收</div>
+        <div class="value" style="font-size:16px;color:var(--success)">{{ orderStats.byStatus['已签收'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='清关中';loadOrders()">
+        <div class="label">清关中</div>
+        <div class="value" style="font-size:16px;color:var(--warn)">{{ orderStats.byStatus['清关中'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='问题件';loadOrders()">
+        <div class="label">问题件</div>
+        <div class="value" style="font-size:16px;color:var(--danger)">{{ orderStats.byStatus['问题件'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='已撤销';loadOrders()">
+        <div class="label">🗑 已撤销</div>
+        <div class="value" style="font-size:16px;color:var(--text2)">{{ orderStats.byStatus['已撤销'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='其他';loadOrders()">
+        <div class="label">其他</div>
+        <div class="value" style="font-size:16px;color:var(--text2)">{{ orderStats.byStatus['其他'] || 0 }}</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;min-width:0" @click="orderFilterStatus='已作废';loadOrders()">
+        <div class="label">已作废</div>
+        <div class="value" style="font-size:16px;color:var(--danger)">{{ orderStats.byStatus['已作废'] || 0 }}</div>
+      </div>
+    </div>
+
+    <!-- 搜索+筛选栏 -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      <input v-model="orderSearchQ" @input="onOrderSearchDelayed" placeholder="单号/收件人/国际单号..." style="flex:1;min-width:140px;padding:7px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+      <select v-model="orderFilterStatus" @change="orderPage=1;loadOrders()" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px">
+        <option value="">全部状态</option>
+        <option value="待入库">待入库</option>
+        <option value="国际运输">国际运输</option>
+        <option value="清关中">清关中</option>
+        <option value="国内配送">国内配送</option>
+        <option value="已签收">已签收</option>
+        <option value="问题件">问题件</option>
+        <option value="已撤销">已撤销</option>
+        <option value="已作废">已作废</option>
+      </select>
+      <select v-if="auth.role==='admin'" v-model="orderFilterSender" @change="orderPage=1;loadOrders()" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;max-width:120px">
+        <option value="">全部寄件人</option>
+        <option v-for="s in orderSenderList" :key="s" :value="s">{{ s }}</option>
+      </select>
+      <select v-model="orderPerPage" @change="orderPage=1;loadOrders()" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;width:70px">
+        <option :value="20">20条/页</option>
+        <option :value="50">50条/页</option>
+        <option :value="100">100条/页</option>
+      </select>
+      <button class="btn" @click="exportOrders" style="padding:7px 12px;font-size:12px">导出</button>
+      <div style="display:inline-flex;align-items:center;gap:3px" v-if="orderTotalPages > 1">
+        <button class="btn" @click="orderPage>1 && (orderPage--,loadOrders())" :disabled="orderPage<=1" style="padding:5px 8px;font-size:11px">|&lt;</button>
+        <button class="btn" @click="orderPage>1 && (orderPage--,loadOrders())" :disabled="orderPage<=1" style="padding:5px 8px;font-size:11px">&lt;</button>
+        <span style="font-size:12px;color:var(--text2);white-space:nowrap;margin:0 2px">{{ orderPage }}/{{ orderTotalPages }}</span>
+        <button class="btn" @click="orderPage<orderTotalPages && (orderPage++,loadOrders())" :disabled="orderPage>=orderTotalPages" style="padding:5px 8px;font-size:11px">&gt;</button>
+        <button class="btn" @click="orderPage<orderTotalPages && (orderPage=orderTotalPages,loadOrders())" :disabled="orderPage>=orderTotalPages" style="padding:5px 8px;font-size:11px">&gt;|</button>
+      </div>
+      <span style="font-size:12px;color:var(--text2)">{{ orderStats.total }}单</span>
+    </div>
+
+    <!-- 批量操作栏 -->
+    <div v-if="orderSelected.length > 0" style="display:flex;gap:6px;align-items:center;padding:8px 12px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:6px;margin-bottom:8px;font-size:13px">
+      <span>已选 <strong>{{ orderSelected.length }}</strong> 单</span>
+      <button class="btn" style="padding:4px 10px;font-size:12px" @click="orderBatchTrack">批量查轨迹</button>
+      <select @change="orderBatchMark($event)" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">
+        <option value="">批量标记状态</option>
+        <option value="已签收">已签收</option>
+        <option value="已撤销">已撤销</option>
+        <option value="待出库">待出库</option>
+        <option value="国际运输">国际运输</option>
+        <option value="清关中">清关中</option>
+        <option value="国内配送">国内配送</option>
+        <option value="已作废">已作废</option>
+        <option value="问题件">问题件</option>
+      </select>
+      <button class="btn" style="padding:4px 10px;font-size:12px;margin-left:auto" @click="orderSelected=[]">取消选择</button>
+    </div>
+
+    <!-- 订单表格 -->
+    <div class="section" style="overflow:visible">
+      <div v-if="orderLoading" class="loading">加载中...</div>
+      <div v-else-if="!orderItems.length" class="loading">暂无匹配订单</div>
+      <div v-else style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="width:36px"><input type="checkbox" @change="orderToggleAll($event.target.checked)" :checked="orderAllSelected"></th>
+            <th>订单号</th><th>收件人</th><th>状态</th><th>寄件人</th><th>国际单号</th><th>轨迹状态</th><th>创建时间</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="r in orderItems" :key="r.sn" :class="{
+                selected: orderSelected.includes(r.sn),
+                'row-签收': r.state_name?.includes('签收'),
+                'row-signed': r.state_name?.includes('签收'),
+                'row-international': r.state_name === '国际运输',
+                'row-domestic': r.state_name === '国内配送',
+                'row-pending': r.state_name === '待入库',
+                'row-customs': r.state_name === '清关中',
+                'row-issue': r.state_name === '问题件',
+                'row-cancelled': r.state_name === '已撤销',
+                'row-voided': r.state_name === '已作废',
+            }">
+              <td><input type="checkbox" :checked="orderSelected.includes(r.sn)" @change="orderToggleOne(r.sn)"></td>
+              <td class="mono clickable" style="font-size:12px;color:var(--primary);cursor:pointer" @click.stop="orderViewDetailModal(r)">{{ r.sn }}</td>
+              <td style="font-size:12px">{{ r.consignee_name }}</td>
+              <td><span class="badge" :class="statusClass(r.manual_status || r.track_status || r.state_name)">{{ r.manual_status || r.track_status || r.state_name }}</span></td>
+              <td style="font-size:11px">{{ r.sender_name }}</td>
+              <td class="mono" style="font-size:11px;cursor:pointer" :title="'点击复制: '+r.global_waybill_sn" @click.stop="copyText(r.global_waybill_sn)">{{ (r.global_waybill_sn||'').slice(0,22) }}{{ (r.global_waybill_sn||'').length > 22 ? '...' : '' }}</td>
+              <td style="font-size:11px">
+                <span v-if="r.track_city" style="font-size:11px;color:var(--primary)">📍 {{ r.track_city }}</span>
+                <span v-else-if="r.track_status" style="font-size:11px;color:var(--text2)">{{ r.track_status }}</span>
+                <span v-else-if="r.global_waybill_sn" style="color:var(--text2)">未查</span>
+                <span v-else style="color:var(--danger)">无单号</span>
+              </td>
+              <td style="font-size:11px;color:var(--text2)">{{ (r.creation_time||'').slice(5,16) }}</td>
+              <td style="white-space:nowrap">
+                <button class="btn" style="padding:2px 8px;font-size:11px" @click.stop="orderTrack(r)">{{ orderTracking[r.sn] ? '...' : '查' }}</button>
+                <button class="btn" style="padding:2px 8px;font-size:11px;margin-left:2px" @click.stop="openTrackingModal(r)">详情</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+
+    <!-- 订单信息浮窗（订单号点击） -->
+    <div v-if="orderModalVisible" class="modal-overlay" @click.self="orderModalVisible=false">
+      <div class="modal" style="max-width:800px">
+        <div class="modal-header">
+          <h2>订单详情 — <code style="font-size:13px">{{ orderModalData?.sn }}</code></h2>
+          <button class="modal-close" @click="orderModalVisible=false">✕</button>
         </div>
-        <div v-if="untrackedLoading" class="loading">加载中...</div>
-        <div v-else-if="!untrackedItems.length" class="loading" style="color:var(--success)">
-          ✅ 全部已查，没有待查订单
+        <div class="modal-body">
+          <template v-if="orderModalData">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;font-size:13px">
+              <div><strong>平台单号</strong><br>{{ orderModalData.platform_sn||'-' }}</div>
+              <div><strong>收件人</strong><br>{{ orderModalData.consignee_name }}</div>
+              <div><strong>寄件人</strong><br>{{ orderModalData.sender_name }}</div>
+              <div><strong>状态</strong><br><span class="badge" :class="statusClass(orderModalData.manual_status || orderModalData.state_name)">{{ orderModalData.manual_status || orderModalData.state_name }}</span></div>
+              <div><strong>线路</strong><br>{{ orderModalData.line_name||'-' }}</div>
+              <div><strong>国际单号</strong><br><code>{{ orderModalData.global_waybill_sn||'-' }}</code></div>
+              <div><strong>重量</strong><br>{{ orderModalData.weight||0 }}g</div>
+              <div><strong>创建时间</strong><br>{{ orderModalData.creation_time||'-' }}</div>
+              <div><strong>轨迹状态</strong><br>{{ orderModalData.track_status||'未查询' }}</div>
+              <div>
+                <strong>标识状态</strong><br>
+                <select v-model="orderModalData.manual_status" @change="setManualStatusFromModal" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;width:100%">
+                  <option value="">— 不标记 —</option>
+                  <option value="✅ 已签收">✅ 已签收</option>
+                  <option value="❌ 已撤销">❌ 已撤销</option>
+                  <option value="📦 待出库">📦 待出库</option>
+                  <option value="✈️ 国际运输">✈️ 国际运输</option>
+                  <option value="🛃 清关中">🛃 清关中</option>
+                  <option value="🚚 国内配送">🚚 国内配送</option>
+                  <option value="⛔ 已作废">⛔ 已作废</option>
+                  <option value="⚠️ 问题件">⚠️ 问题件</option>
+                </select>
+              </div>
+            </div>
+            <h3 style="margin:16px 0 8px;font-size:14px">📦 产品明细</h3>
+            <div v-if="orderModalLoading" style="text-align:center;padding:20px;color:var(--text2);font-size:13px">⏳ 加载产品明细...</div>
+            <div v-else-if="!orderModalProducts.length" style="color:var(--text2);font-size:13px;padding:12px 0">暂无产品数据</div>
+            <div v-else style="overflow-x:auto">
+              <table style="font-size:12px">
+                <thead><tr>
+                  <th>#</th><th>商品编码</th><th>商品名称</th><th>英文名</th><th>品牌</th><th>数量</th><th>单价(RMB)</th><th>净重(g)</th>
+                </tr></thead>
+                <tbody>
+                  <tr v-for="(p,i) in orderModalProducts" :key="i">
+                    <td>{{ i+1 }}</td>
+                    <td class="mono" style="font-size:11px">{{ p.goodsCode||'-' }}</td>
+                    <td style="max-width:200px">{{ p.goodsName||'-' }}</td>
+                    <td style="font-size:11px;color:var(--text2);max-width:200px">{{ p.goodsNameForeign||'-' }}</td>
+                    <td style="font-size:11px">{{ p.goodsBrand||'-' }}</td>
+                    <td style="text-align:center">{{ p.num||0 }}</td>
+                    <td style="text-align:right">{{ p.priceRMB ? (p.priceRMB/100).toFixed(2) : '-' }}</td>
+                    <td style="text-align:right">{{ p.netWeight||'-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
         </div>
-        <div v-else style="overflow-x:auto">
-          <table>
-            <thead><tr>
-              <th>订单号</th><th>收件人</th><th>寄件人</th><th>状态</th><th>国际单号</th><th>国内单号</th><th>创建时间</th><th>操作</th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="r in untrackedItems" :key="r.sn">
-                <td class="mono clickable" style="font-size:11px" @click="viewOrder(r.sn)">{{ r.sn }}</td>
-                <td>{{ r.consignee }}</td>
-                <td style="font-size:11px">{{ r.sender }}</td>
-                <td><span class="badge" :class="statusClass(r.state)">{{ r.state }}</span></td>
-                <td class="mono" style="font-size:11px">{{ r.tracking_no?.slice(0,22) || '-' }}</td>
-                <td class="mono" style="font-size:11px">{{ r.domestic_no?.slice(0,18) || '-' }}</td>
-                <td style="font-size:11px;color:var(--text2)">{{ r.created?.slice(5,16) }}</td>
-                <td style="white-space:nowrap">
-                  <button class="btn" style="padding:2px 8px;font-size:11px" :disabled="!r.tracking_no" @click="r.tracking_no && refreshSingleTrack(r.tracking_no, true)">
-                    {{ (!r.tracking_no) ? '—' : (refreshingTrack === r.tracking_no ? '⏳' : '🔄 查轨迹') }}
-                  </button>
-                  <select class="status-mark-select" @change="r.tracking_no && markTrackStatus(r.tracking_no, $event)" style="margin-left:4px;padding:2px 4px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;max-width:60px">
-                    <option value="">▾标记</option>
-                    <option value="已签收">✅ 已签收</option>
-                    <option value="已撤销">❌ 已撤销</option>
-                    <option value="待出库">📦 待出库</option>
-                    <option value="国际运输">✈️ 国际运输</option>
-                    <option value="清关中">🛃 清关中</option>
-                    <option value="国内配送">🚚 国内配送</option>
-                    <option value="已作废">⛔ 已作废</option>
-                    <option value="问题件">⚠️ 问题件</option>
-                  </select>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      </div>
+    </div>
+
+    <!-- 物流轨迹弹窗（详情按钮） -->
+    <div v-if="trackingModalVisible" class="modal-overlay" @click.self="trackingModalVisible=false">
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h2>🚚 全程物流轨迹</h2>
+          <button class="modal-close" @click="trackingModalVisible=false">✕</button>
+        </div>
+        <div class="modal-body">
+          <template v-if="trackingModalData">
+            <!-- Loading -->
+            <div v-if="trackingModalLoading" style="text-align:center;padding:30px 0;color:var(--text2);font-size:13px">⏳ 正在查询轨迹...</div>
+            <!-- Error -->
+            <div v-else-if="trackingModalError" style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:10px;margin-bottom:8px;font-size:12px;color:var(--danger)">⚠ {{ trackingModalError }}</div>
+            <!-- Timeline -->
+            <div v-else-if="trackingModalTracking.length > 0" class="tracking-timeline">
+              <div v-for="(t,i) in trackingModalTracking" :key="i" class="timeline-item" :class="{active:i===0}">
+                <div class="timeline-dot"></div>
+                <div class="timeline-content">
+                  <div class="timeline-time">
+                    {{ t.time }}
+                    <span v-if="t.statusName" style="margin-left:6px;font-size:11px;color:var(--text2);font-weight:500">[{{ t.statusName }}]</span>
+                  </div>
+                  <div class="timeline-desc">{{ t.desc }}</div>
+                  <div class="timeline-location" v-if="t.location">📍 {{ t.location }}</div>
+                  <div style="font-size:11px;color:var(--text2);margin-top:2px">
+                    <span v-if="t.nextSiteName">➡️ 下一站: {{ t.nextSiteName }}</span>
+                    <span v-if="t.signerName" style="margin-left:8px">👤 签收: {{ t.signerName }}<span v-if="t.signerTypeDesc">({{ t.signerTypeDesc }})</span></span>
+                    <span v-if="t.contact" style="margin-left:8px">📞 {{ t.contact }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- No data -->
+            <div v-else style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">
+              <span v-if="trackingModalData.global_waybill_sn">尚无轨迹数据</span>
+              <span v-else>无国际单号</span>
+            </div>
+            <!-- Actions -->
+            <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">
+              <select @change="orderSingleMark(trackingModalData.global_waybill_sn, $event)" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text)">
+                <option value="">标记状态</option>
+                <option value="已签收">已签收</option>
+                <option value="已撤销">已撤销</option>
+                <option value="待出库">待出库</option>
+                <option value="国际运输">国际运输</option>
+                <option value="清关中">清关中</option>
+                <option value="国内配送">国内配送</option>
+                <option value="已作废">已作废</option>
+                <option value="问题件">问题件</option>
+              </select>
+              <button class="btn" v-if="trackingModalData.global_waybill_sn" @click="copyText(trackingModalData.global_waybill_sn)">复制单号</button>
+            </div>
+          </template>
+          <div v-else class="loading">加载中...</div>
         </div>
       </div>
     </div>
   </div>
 
   <!-- Tab: 财务 -->
-  <div v-if="activeTab==='finance'" class="tab-content">
+  <div v-show="activeTab==='finance'" class="tab-content">
     <div class="loading" v-if="financeLoading">加载财务数据中...</div>
     <template v-else>
       <!-- Stats -->
@@ -803,7 +929,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
         <div class="stat-card">
           <div class="label">📋 称重补款总笔数</div>
           <div class="value" style="color:var(--accent)">{{ finance.total_count }}</div>
-          <div class="sub">{{ currentMonth === 'april' ? '2026年4月' : '2026年5月' }}</div>
+          <div class="sub">{{ monthLabel }}</div>
         </div>
         <div class="stat-card">
           <div class="label">💰 称重补款总额</div>
@@ -880,7 +1006,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
   <!-- Tab: 超重分析 -->
-  <div v-if="activeTab==='overweight'" class="tab-content">
+  <div v-show="activeTab==='overweight'" class="tab-content">
     <!-- 子Tab切换 -->
     <div style="display:flex;gap:4px;margin-bottom:12px;background:var(--card);padding:4px;border-radius:8px;border:1px solid var(--border);width:fit-content">
       <button class="tab-btn" :class="{active:overweightSubTab==='products'}" style="font-size:12px;padding:4px 14px"
@@ -1009,7 +1135,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
   <!-- Tab: 查询 -->
-  <div v-if="activeTab==='search'" class="tab-content">
+  <div v-show="activeTab==='search'" class="tab-content">
     <!-- 单号实时查轨迹 -->
     <div class="section" style="margin-bottom:16px">
       <div class="section-header">
@@ -1038,6 +1164,10 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
             <div class="stat-value" style="font-size:14px">{{ trackQueryResult.logistics_company || '—' }}</div>
           </div>
           <div class="stat-card" style="flex:1;min-width:120px">
+            <div class="stat-label">国际单号</div>
+            <div class="stat-value mono" style="font-size:13px;cursor:pointer" @click="copyText(trackQueryNo)" :title="'点击复制'">{{ trackQueryNo }}</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:120px">
             <div class="stat-label">国内单号</div>
             <div class="stat-value mono" style="font-size:13px;cursor:pointer" @click="copyText(trackQueryResult.domestic_no)" :title="trackQueryResult.domestic_no ? '点击复制' : ''">{{ trackQueryResult.domestic_no || '—' }}</div>
           </div>
@@ -1049,6 +1179,10 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
             <template v-if="trackQueryResult.status_time">更新时间: {{ trackQueryResult.status_time }}</template>
             <template v-if="trackQueryResult.weight"> | 重量: {{ trackQueryResult.weight }}</template>
           </div>
+        </div>
+        <div style="margin-top:12px;padding:8px 12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:12px;color:var(--success);display:flex;align-items:center;gap:8px">
+          ✅ 轨迹数据已同步到看板数据库
+          <button class="btn" style="padding:3px 10px;font-size:11px" @click="refresh()">🔄 刷新看板</button>
         </div>
       </div>
     </div>
@@ -1157,7 +1291,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
       <div class="stat-card">
         <div class="label">🛠 售后总单</div>
         <div class="value" style="color:var(--warn)">{{ afterSalesStats.total }}</div>
-        <div class="sub">{{ currentMonth==='april'?'4月':'5月' }}</div>
+        <div class="sub">{{ monthLabelShort }}</div>
       </div>
       <div class="stat-card">
         <div class="label">⏳ 待处理</div>
@@ -1329,7 +1463,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   </div>
 
   <!-- ── Todo Tab（待办：未认证身份证）── -->
-  <div v-if="activeTab==='todo'" class="tab-content">
+  <div v-show="activeTab==='todo'" class="tab-content">
     <div v-if="todoLoading" class="loading">加载待办数据中...</div>
     <template v-else>
       <!-- Stats -->
@@ -1353,6 +1487,13 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
 
       <div v-if="todoError" style="padding:12px;background:rgba(239,68,68,.1);border-radius:6px;color:var(--danger);font-size:13px">
         ❌ 无法获取清关数据: {{ todoError }}
+      </div>
+
+      <!-- 全部已认证状态 -->
+      <div v-if="!todoLoading && !todoError && todoTotal === 0 && todoSenders.length === 0" style="text-align:center;padding:40px 20px;color:var(--text2)">
+        <div style="font-size:48px;margin-bottom:12px">✅</div>
+        <div style="font-size:15px">全部身份证已认证</div>
+        <div style="font-size:12px;margin-top:6px">当前没有需要上传身份证的待办项</div>
       </div>
 
       <!-- 按寄件人分组 -->
@@ -1671,7 +1812,7 @@ select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
           <!-- Basic Info -->
           <h3 style="font-size:14px;margin-bottom:8px;color:var(--accent)">基本信息</h3>
           <div class="detail-grid">
-            <div><span>状态:</span> <span class="badge" :class="statusClass(orderDetail.state_name)">{{ orderDetail.state_name }}</span></div>
+            <div><span>状态:</span> <span class="badge" :class="statusClass(orderDetail.manual_status || orderDetail.state_name)">{{ orderDetail.manual_status || orderDetail.state_name }}</span></div>
             <div><span>线路:</span> {{ orderDetail.line_name }}</div>
             <div><span>重量:</span> {{ orderDetail.weight_kg }} kg</div>
             <div><span>创建:</span> {{ orderDetail.created }}</div>
@@ -2021,7 +2162,7 @@ createApp({
     }[orderPhase.value] || '处理中'));
     let orderSyncTimer = null;
 
-    const autoRefresh = ref(true);
+    const autoRefresh = ref('30s');
     const lastUpdate = ref('');
     const chartReady = ref(false);
 
@@ -2081,15 +2222,59 @@ createApp({
     const markingTrack = ref('');
     const untrackedItems = ref([]);
     const untrackedLoading = ref(false);
-    const untrackedCount = computed(() => untrackedItems.value.length);
 
-    // Order detail modal
-    const orderDetail = ref(null);
+    // 订单管理中心 refs
+    const orderItems = ref([]);
+    const orderStats = ref({total:0, byStatus:{}});
+    const orderSearchQ = ref('');
+    const orderFilterStatus = ref('');
+    const orderFilterSender = ref('');
+    const orderSenderList = ref([]);
+    const orderPage = ref(1);
+    const orderPerPage = ref(50);
+    const orderSelected = ref([]);
     const orderLoading = ref(false);
+    const trackingModalVisible = ref(false);
+    const trackingModalData = ref(null);
+    const trackingModalTracking = ref([]);
+    const trackingModalLoading = ref(false);
+    const trackingModalError = ref('');
+    const orderDetail = ref(null);
+    const orderTracking = ref({});
+    const orderModalData = ref(null);
+    const orderModalVisible = ref(false);
+    const orderModalProducts = ref([]);
+    const orderModalLoading = ref(false);
+    const untrackedCount = computed(() => untrackedItems.value.length);
 
     // Active tab
     const activeTab = ref('overview');
     const currentMonth = ref('may');
+    const MONTH_NAMES = ['','jan','feb','mar','apr','may','june','july','aug','sep','oct','nov','dec'];
+    const MONTH_LABELS = ['','1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+    const monthLabel = computed(() => {
+      const idx = MONTH_NAMES.indexOf(currentMonth.value);
+      if (idx > 0) return `${new Date().getFullYear()}年${MONTH_LABELS[idx]}`;
+      return currentMonth.value;
+    });
+
+    const monthLabelShort = computed(() => {
+      const idx = MONTH_NAMES.indexOf(currentMonth.value);
+      if (idx > 0) return MONTH_LABELS[idx];
+      return currentMonth.value;
+    });
+
+    const monthOptions = computed(() => {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = now.getMonth() + 1; // 1-12
+      const months = [];
+      for (let i = Math.max(1, m-2); i <= m; i++) {
+        months.push({value: MONTH_NAMES[i], label: `📅 ${y}年${MONTH_LABELS[i]}`});
+      }
+      return months;
+    });
 
     // Anomaly comparison
     const anomalyStats = ref({ total: 0, ok: 0, warning: 0, severe: 0, scanned_at: '' });
@@ -2214,7 +2399,7 @@ createApp({
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
-            tracking_no: afterForm.value.tracking_no,
+            tracking_no: afterForm.value.intl_tracking_no || afterForm.value.tracking_no,
             intl_tracking_no: afterForm.value.intl_tracking_no || undefined,
             domestic_tracking_no: afterForm.value.domestic_tracking_no || undefined,
             sender_name: afterForm.value.sender_name || undefined,
@@ -2318,7 +2503,7 @@ createApp({
 
     // Finance
     const finance = ref({ total_count: 0, total_amount: 0, daily: [] });
-    const showFinanceDaily = ref(false);
+    const showFinanceDaily = ref(true);
     const financeLoading = ref(false);
     const financeRefreshing = ref(false);
     const financeRefreshMsg = ref('');
@@ -2771,7 +2956,7 @@ createApp({
     };
 
     const renderFinanceCharts = () => {
-      // Daily bar chart
+      if (typeof Chart === 'undefined') { setTimeout(renderFinanceCharts, 1000); return; }
       const daily = finance.value.daily;
       if (daily?.length && financeChart.value) {
         if (financeChartInst) financeChartInst.destroy();
@@ -2796,16 +2981,16 @@ createApp({
         });
       }
 
-      // Product pie chart
+      // Product/sender pie chart
       const products = productStats.value.products || [];
       if (products.length && productPieChart.value) {
         if (productPieChartInst) productPieChartInst.destroy();
-        const top = [...products].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 8);
-        const pieColors = ['#ef4444','#f97316','#f59e0b','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
-        const otherAmt = products.slice(8).reduce((s, p) => s + Math.abs(p.amount), 0);
-        const labels = top.map(p => p.name.length > 12 ? p.name.slice(0, 12) + '...' : p.name);
-        const data = top.map(p => Math.abs(p.amount));
-        if (otherAmt > 0) { labels.push('其他'); data.push(otherAmt); }
+        const top = [...products].sort((a, b) => b.count - a.count).slice(0, 8);
+        const pieColors = ['#3b82f6','#f97316','#f59e0b','#22c55e','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
+        const otherCnt = products.slice(8).reduce((s, p) => s + (p.count || 0), 0);
+        const labels = top.map(p => p.name.length > 10 ? p.name.slice(0, 10) + '...' : p.name);
+        const data = top.map(p => p.count || 0);
+        if (otherCnt > 0) { labels.push('其他'); data.push(otherCnt); }
         productPieChartInst = new Chart(productPieChart.value, {
           type: 'doughnut',
           data: { labels, datasets: [{ data, backgroundColor: [...pieColors.slice(0, top.length), '#475569'], borderWidth: 0 }] },
@@ -2891,6 +3076,7 @@ createApp({
       }
     };
     const statusTimelineClass = (s) => {
+      if (!s) return '';
       if (s.includes('签收')) return 'signed';
       if (s.includes('异常') || s.includes('错误')) return 'warn';
       return '';
@@ -2904,9 +3090,9 @@ createApp({
           fetch(`/api/stats?month=${currentMonth.value}`).then(r => { if (!r.ok) throw new Error('API error'); return r.json(); }),
           fetch(`/api/tracking/results?page=${trackPage.value}&per_page=${trackPerPage.value}&status_filter=${statusFilter.value}&month=${currentMonth.value}`).then(r => r.json())
         ]);
-        stats.value = s;
-        trackingItems.value = t.items;
-        trackingTotal.value = t.total;
+        stats.value = s || {};
+        trackingItems.value = (t || {}).items || [];
+        trackingTotal.value = (t || {}).total || 0;
         lastUpdate.value = new Date().toLocaleTimeString('zh-CN');
         chartReady.value = true;
         await nextTick();
@@ -3031,8 +3217,8 @@ createApp({
     const loadTracking = async () => {
       try {
         const t = await fetch(`/api/tracking/results?page=${trackPage.value}&per_page=${trackPerPage.value}&status_filter=${statusFilter.value}&month=${currentMonth.value}`).then(r => r.json());
-        trackingItems.value = t.items;
-        trackingTotal.value = t.total;
+        trackingItems.value = (t || {}).items || [];
+        trackingTotal.value = (t || {}).total || 0;
       } catch (e) {
         console.error('load tracking error', e);
       }
@@ -3069,10 +3255,10 @@ createApp({
 
     const viewDetail = async (trackingNo) => {
       detailData.value = { tracking_no: trackingNo };
+      if (!trackingNo) return;
       try {
         const r = await fetch(`/api/tracking/${encodeURIComponent(trackingNo)}?month=${currentMonth.value}`).then(r => { if (!r.ok) throw new Error(); return r.json(); });
         const raw = r.tracking || r;
-        // 映射蛇形→驼峰
         detailData.value = {
           tracking_no: trackingNo,
           currentStatus: raw.current_status || raw.currentStatus || '',
@@ -3080,11 +3266,28 @@ createApp({
           latestTime: raw.latest_time || raw.latestTime || '',
           extTrackNoCn: raw.ext_track_no_cn || raw.extTrackNoCn || '',
           logisticsCompany: raw.logisticsCompany || raw.source || guessCarrier(raw.source || '', raw.tracking_no || trackingNo, raw.ext_track_no_cn || ''),
-          trackingDetails: raw.trackingDetails || [],
-          ...raw,
+          trackingDetails: raw.trackingDetails || raw.tracking_details || [],
         };
       } catch (e) {
-        detailData.value = { tracking_no: trackingNo, currentStatus: '查询失败', trackingDetails: [] };
+        // DB查不到 → 降级到实时API查询
+        try {
+          const live = await fetch(`/api/tracking/query-live?tracking_no=${encodeURIComponent(trackingNo)}`).then(r => r.json());
+          if (live.found) {
+            detailData.value = {
+              tracking_no: trackingNo,
+              currentStatus: live.status_name || live.current_status || '',
+              latestDesc: live.status_text || live.latest_desc || '',
+              latestTime: live.status_time || live.latest_time || (live.trackingDetails?.[0]?.trackingTime || ''),
+              extTrackNoCn: live.ext_track_no_cn || live.extTrackNoCn || '',
+              logisticsCompany: live.logisticsCompany || live.source || '',
+              trackingDetails: live.trackingDetails || live.tracking_details || [],
+            };
+          } else {
+            detailData.value = { tracking_no: trackingNo, currentStatus: '未找到', trackingDetails: [] };
+          }
+        } catch (e2) {
+          detailData.value = { tracking_no: trackingNo, currentStatus: '查询失败', trackingDetails: [] };
+        }
       }
     };
     // 物流公司猜测（前端版）
@@ -3196,11 +3399,157 @@ createApp({
       }
     };
 
+    // 订单管理中心
+    const loadOrders = async () => {
+      orderLoading.value = true;
+      try {
+        const params = new URLSearchParams({page: orderPage.value, per_page: orderPerPage.value, month: currentMonth.value, sort_by: "creation_time", sort_order: "desc"});
+        if (orderSearchQ.value.trim()) params.set("q", orderSearchQ.value.trim());
+        if (orderFilterStatus.value) params.set("status", orderFilterStatus.value);
+        if (orderFilterSender.value) params.set("sender", orderFilterSender.value);
+        const r = await fetch("/api/orders/query?" + params.toString()).then(r => r.json());
+        if (!r) { orderItems.value = []; orderStats.value = {total:0, byStatus:{}}; return; }
+        orderItems.value = r.items || [];
+        orderStats.value = {total: r.total, byStatus: r.by_status || {}};
+        if (auth.role === "admin" && !orderSenderList.value.length) {
+          const sr = await fetch("/api/senders?month=" + currentMonth.value).then(r => r.json());
+          orderSenderList.value = sr.senders || [];
+        }
+      } catch(e) {console.error(e);}
+      finally {orderLoading.value = false;}
+    };
+    const orderTotalPages = computed(() => Math.max(1, Math.ceil(orderStats.value.total / orderPerPage.value)));
+    const orderAllSelected = computed(() => orderItems.value.length > 0 && orderItems.value.every(r => orderSelected.value.includes(r.sn)));
+    const orderToggleAll = (c) => {orderSelected.value = c ? orderItems.value.map(r => r.sn) : [];};
+    const orderToggleOne = (sn) => {const i = orderSelected.value.indexOf(sn); i >= 0 ? orderSelected.value.splice(i,1) : orderSelected.value.push(sn);};
+    const onOrderSearchDelayed = () => {clearTimeout(window._ot); window._ot = setTimeout(() => {orderPage.value=1;loadOrders();}, 400);};
+    const openTrackingModal = async (r) => {
+      trackingModalData.value = r;
+      trackingModalTracking.value = [];
+      trackingModalError.value = '';
+      trackingModalLoading.value = true;
+      trackingModalVisible.value = true;
+      if (r.global_waybill_sn) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 15000);
+          const resp = await fetch("/api/tracking/query-live?tracking_no=" + encodeURIComponent(r.global_waybill_sn), {signal: ctrl.signal}).then(r=>r.json());
+          clearTimeout(t);
+          if (resp.trackingDetails?.length) trackingModalTracking.value = resp.trackingDetails;
+          if (!resp.trackingDetails?.length) {
+            if (resp.sdk_error) trackingModalError.value = 'SDK查询异常: ' + resp.sdk_error;
+            else if (resp.status_text) trackingModalError.value = '最新状态: ' + resp.status_text + '，无详细时间线';
+          }
+        } catch(e){
+          trackingModalError.value = e.name === 'AbortError' ? '⏱ 查询超时(15s)，请稍后重试' : '网络请求失败: ' + e.message;
+        }
+      }
+      trackingModalLoading.value = false;
+    };
+    const orderTrack = async (r) => {
+      if (!r.global_waybill_sn) return;
+      orderTracking.value[r.sn] = true;
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 15000);
+        const resp = await fetch("/api/tracking/query-live?tracking_no=" + encodeURIComponent(r.global_waybill_sn), {signal: ctrl.signal}).then(r=>r.json());
+        clearTimeout(t);
+        // 自动标记：轨迹有城市且当前显示"其他"→设为国际运输
+        if (resp.city) {
+          const cur = r.manual_status || r.track_status || r.state_name || '';
+          if (cur === '其他') {
+            try { await fetch("/api/tracking/"+encodeURIComponent(r.global_waybill_sn)+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"国际运输"})}); } catch(e){}
+          }
+        }
+        if (resp.trackingDetails?.length) loadOrders();
+        loadOrders();
+      } catch(e){}
+      finally {orderTracking.value[r.sn] = false;}
+    };
+    const orderBatchTrack = async () => {
+      if(!orderSelected.value.length) return;
+      const batch = [...orderSelected.value];
+      orderSelected.value = [];
+      for(const sn of batch){
+        const item = orderItems.value.find(r=>r.sn===sn);
+        if(item?.global_waybill_sn) {
+          const resp = await fetch("/api/tracking/query-live?tracking_no="+encodeURIComponent(item.global_waybill_sn)).then(r=>r.json());
+          // 自动标记：轨迹有城市且当前显示"其他"→设为国际运输
+          if (resp.city) {
+            const cur = item.manual_status || item.track_status || item.state_name || '';
+            if (cur === '其他') {
+              try { await fetch("/api/tracking/"+encodeURIComponent(item.global_waybill_sn)+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"国际运输"})}); } catch(e){}
+            }
+          }
+        }
+      }
+      loadOrders();
+      alert("批量查轨迹完成: " + batch.length + "条");
+    };
+    const orderBatchMark = async (ev) => {
+      const st = ev.target.value; ev.target.value="";
+      if(!st||!orderSelected.value.length) return;
+      if(!confirm("确认将"+orderSelected.value.length+"单标记为"+st+"?")) return;
+      const emojiMap = {'已签收':'✅ 已签收','已撤销':'❌ 已撤销','待出库':'📦 待出库','国际运输':'✈️ 国际运输','清关中':'🛃 清关中','国内配送':'🚚 国内配送','已作废':'⛔ 已作废','问题件':'⚠️ 问题件'};
+      const fullStatus = emojiMap[st] || st;
+      for(const sn of orderSelected.value){
+        try{await fetch('/api/orders/manual-status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn,status:fullStatus,month:currentMonth.value})});}catch(e){}
+      }
+      orderSelected.value=[];loadOrders();alert("批量标记完成");
+    };
+    const orderSingleMark = async (tn, ev) => {
+      const st = ev.target.value; ev.target.value="";
+      if(!st||!tn) return;
+      const emojiMap = {'已签收':'✅ 已签收','已撤销':'❌ 已撤销','待出库':'📦 待出库','国际运输':'✈️ 国际运输','清关中':'🛃 清关中','国内配送':'🚚 国内配送','已作废':'⛔ 已作废','问题件':'⚠️ 问题件'};
+      const fullStatus = emojiMap[st] || st;
+      try{await fetch('/api/orders/manual-status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sn:tn,status:fullStatus,month:currentMonth.value})});loadOrders();}catch(e){}
+    };
+    const orderViewDetailModal = async (r) => {
+      orderModalData.value = r;
+      orderModalProducts.value = [];
+      orderModalVisible.value = true;
+      orderModalLoading.value = true;
+      try {
+        const resp = await fetch("/api/orders/" + encodeURIComponent(r.sn) + "/products").then(r=>r.json());
+        if (!resp) { orderModalProducts.value = [{goodsName: "API未返回数据", num: 0}]; return; }
+        orderModalProducts.value = resp.items || [];
+        if (!orderModalProducts.value.length && resp.error) {
+          orderModalProducts.value = [{goodsName: "获取失败: " + resp.error, num: 0}];
+        }
+      } catch(e) {
+        orderModalProducts.value = [{goodsName: "请求失败: " + e.message, num: 0}];
+      } finally {
+        orderModalLoading.value = false;
+      }
+    };
+    const exportOrders = async () => {
+      const params = new URLSearchParams({month: currentMonth.value});
+      if(orderSearchQ.value.trim()) params.set("q",orderSearchQ.value.trim());
+      if(orderFilterStatus.value) params.set("status",orderFilterStatus.value);
+      if(orderFilterSender.value) params.set("sender",orderFilterSender.value);
+      const r = await fetch("/api/orders/export?"+params.toString());
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "orders_"+currentMonth.value+".csv";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
     const viewOrder = async (sn) => {
       orderLoading.value = true;
       orderDetail.value = null;
       try {
         const r = await fetch(`/api/order/${sn}?month=${currentMonth.value}`).then(r => r.json());
+        // 同时加载产品明细
+        try {
+          const prodResp = await fetch(`/api/orders/${encodeURIComponent(sn)}/products`).then(r => r.json());
+          r.products = prodResp.items || [];
+          r.has_full_detail = true;
+        } catch(e) {
+          r.products = [];
+          console.error('产品加载失败', e);
+        }
         orderDetail.value = r;
       } catch (e) {
         orderDetail.value = { sn, error: '加载失败' };
@@ -3240,6 +3589,31 @@ createApp({
         }
       } catch (e) {
         console.error('设置状态失败', e);
+      }
+    };
+    const setManualStatusFromModal = async () => {
+      const status = orderModalData.value?.manual_status || '';
+      const sn = orderModalData.value?.sn;
+      if (!sn) return;
+      const prev = orderModalData.value.manual_status;
+      try {
+        const r = await fetch('/api/orders/manual-status', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ sn, status, month: currentMonth.value })
+        }).then(r => r.json());
+        if (!r.ok && !r.ok === undefined) {
+          orderModalData.value.manual_status = prev;
+        }
+        // Also sync to orderItems list if the order is there
+        const match = orderItems.value?.find(item => item.sn === sn);
+        if (match) {
+          match.manual_status = status || undefined;
+          match.manual_status_updated = new Date().toLocaleString();
+        }
+      } catch (e) {
+        orderModalData.value.manual_status = prev;
+        console.error('标识状态失败', e);
       }
     };
     const refreshOrderTracking = async (o) => {
@@ -3387,6 +3761,8 @@ createApp({
     };
 
     const renderCharts = () => {
+      if (!stats.value) return;
+      if (typeof Chart === 'undefined') { setTimeout(renderCharts, 1000); return; }
       // State distribution donut
       const sd = stats.value.state_distribution || {};
       const labels1 = Object.keys(sd);
@@ -3432,9 +3808,18 @@ createApp({
       }
     };
 
-    const toggleAutoRefresh = () => { autoRefresh.value = !autoRefresh.value; };
+    const toggleAutoRefresh = () => {
+      if (autoRefresh.value === 'off') {
+        const last = localStorage.getItem('heute_refresh_interval') || '30s';
+        autoRefresh.value = last;
+      } else {
+        autoRefresh.value = 'off';
+      }
+    };
 
     const switchMonth = () => {
+      // Save page to localStorage and reset
+      localStorage.setItem('heute_order_page', '1');
       // Reset caches and reload everything
       financeInitialized.value = false;
       finance.value = { total_count: 0, total_amount: 0, daily: [] };
@@ -3445,14 +3830,37 @@ createApp({
       recentOrders.value = [];
       recentPage.value = 1;
       expanded.value = {};
+      orderPage.value = 1;
       refresh();
       loadFinance();
       loadProductStats();
     };
+    
+    // Restore saved page from localStorage
+    const savedPage = localStorage.getItem('heute_order_page');
+    if (savedPage && parseInt(savedPage) > 1) {
+      orderPage.value = parseInt(savedPage);
+    }
 
+    // Track the user's preferred refresh interval
+    const savedInterval = localStorage.getItem('heute_refresh_interval');
+    if (savedInterval && ['15s','30s','60s'].includes(savedInterval)) {
+      autoRefresh.value = savedInterval;
+    }
     watch(autoRefresh, (v) => {
       if (timer) clearInterval(timer);
-      if (v) timer = setInterval(refresh, 15000);
+      if (v !== 'off') {
+        localStorage.setItem('heute_refresh_interval', v);
+        const ms = v === '60s' ? 60000 : (v === '30s' ? 30000 : 15000);
+        timer = setInterval(refresh, ms);
+      } else {
+        localStorage.removeItem('heute_refresh_interval');
+      }
+    });
+
+    // Save page number to localStorage on change
+    watch(orderPage, (v) => {
+      localStorage.setItem('heute_order_page', String(v));
     });
 
     const closeDropdown = (e) => { if (!e.target.closest('.status-dropdown-wrap')) activeDropdown.value = null; };
@@ -3462,7 +3870,6 @@ createApp({
       await checkAuth();
       if (auth.loggedIn) {
         refresh();
-        if (autoRefresh.value) timer = setInterval(refresh, 15000);
         // 页面加载时检查后端是否有批量查询任务在运行
         try {
           const st = await fetch('/api/tracking/query-untracked/status').then(r => r.json());
@@ -3497,10 +3904,11 @@ createApp({
       searchQuery, searchResults, searchDone,
       trackQueryNo, trackQueryResult, trackQueryLoading,
       doTrackQuery, trackStatusBadge,
+      trackLiveResult, trackLiveLoading,
       detailData, refreshingTrack, detailRefreshing, markingTrack,
       orderDetail, orderLoading,
       activeTab,
-      currentMonth, switchMonth,
+      currentMonth, monthLabel, monthLabelShort, monthOptions, switchMonth,
       finance, financeLoading, financeChart, orderSearch, financeRefreshing, financeRefreshMsg,
       loadFinance, refreshFinance, loadProductStats, productStats, productPieChart,
       showFinanceDaily, sortedFinanceDaily, topFinanceThreshold,
@@ -3523,7 +3931,7 @@ createApp({
       trackRunning, batchBusy, lastCopied, trackPercent, trackPhase, trackPhaseIcon, trackPhaseLabel, trackMsgText,
       orderSyncing, orderSyncBusy, orderPercent, orderPhase, orderPhaseIcon, orderPhaseLabel, orderMsg, syncOrders,
       statusClass, copyText, statusTimelineClass,
-      activeDropdown, toggleDropdown, abnormalDisplayStatus, abnormalStatusClass, setManualStatus, refreshOrderTracking,
+      activeDropdown, toggleDropdown, abnormalDisplayStatus, abnormalStatusClass, setManualStatus, setManualStatusFromModal, refreshOrderTracking,
       abnormalSearch, abnormalPage, abnormalPerPage, selectedAbnormal, showProcessed, toastMsg, toastType,
       filteredItems, activeItems, processedItems, activeTotalPages, paginatedActiveItems,
       toggleSelectAll, toggleSelectOne, batchSetStatus, exportAbnormalCSV, showToast,
@@ -3532,6 +3940,14 @@ createApp({
       afterSalesStatusFilter, afterSalesSenderFilter, afterSalesSenderList, afterForm, showAfterSalesForm, afterSubmitting,
       trackingMatchStatus, onTrackingNoChange,
       loadAfterSales, submitAfterSales, resetAfterForm, updateAfterSalesStatus,
+      afterSalesSearch, onAfterSalesSearch,
+      // 订单管理中心 refs
+      orderItems, orderStats, orderSearchQ, orderFilterStatus, orderFilterSender, orderSenderList,
+      orderPage, orderPerPage, orderSelected, orderLoading,
+      orderTracking,
+      trackingModalVisible, trackingModalData, trackingModalTracking, trackingModalLoading, trackingModalError, openTrackingModal,
+      orderModalData, orderModalVisible, orderModalProducts, orderModalLoading, orderViewDetailModal,
+      loadOrders, orderTotalPages, orderAllSelected, orderToggleAll, orderToggleOne, onOrderSearchDelayed, orderTrack, orderBatchTrack, orderBatchMark, orderSingleMark, exportOrders, copyText,
       deleteAfterSales, afterSaleTypeClass, batchUpdating,
       // Todo
       todoSenders, todoTotal, todoSenderCount, todoLoading, todoError,
@@ -3543,7 +3959,6 @@ createApp({
       openUpload, closeUpload, onFrontChange, onReverseChange, doUpload,
     };
   }
-}).mount('#app');
-</script></div>
+}).mount('#app');</script></div>
 </body>
 </html>

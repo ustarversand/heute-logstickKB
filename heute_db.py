@@ -279,10 +279,40 @@ def get_senders(path: str = DB_PATH) -> list[str]:
 
 def upsert_tracking(db: sqlite3.Connection, tracking_no: str, month: str,
                     tracking: dict, order_info: dict = None):
-    """插入或更新一条轨迹记录"""
+    """插入或更新一条轨迹记录
+    
+    保护已有完整轨迹明细不被不完整数据覆盖（方案二：增量更新）
+    如果新数据 trackingDetails 为空/短，但DB已有完整明细 → 保留旧明细
+    """
     details = tracking.get('trackingDetails', [])
     if not isinstance(details, list):
         details = []
+
+    # ── 检查DB是否已有更完整的轨迹明细 ──
+    old = db.execute(
+        "SELECT current_status, tracking_json FROM tracking WHERE tracking_no=? AND month=?",
+        (tracking_no, month)
+    ).fetchone()
+    if old:
+        old_status = (old[0] or '').strip()
+        old_json = old[1]
+        old_details = []
+        if old_json:
+            try:
+                old_details = json.loads(old_json) if isinstance(old_json, str) else []
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 保护条件：新数据没明细或只有1条，但旧数据有≥3条明细
+        new_details_count = len(details) if isinstance(details, list) else 0
+        old_details_count = len(old_details) if isinstance(old_details, list) else 0
+        if new_details_count < 3 and old_details_count >= 3:
+            # 保留旧明细
+            details = old_details
+            # 如果新API返回"其他"但旧有具体状态 → 保留旧状态
+            new_status = (tracking.get('currentStatus', '') or '').strip()
+            if new_status in ('', '其他', '其它') and old_status not in ('', '其他', '其它'):
+                tracking['currentStatus'] = old_status
 
     db.execute("""
         INSERT OR REPLACE INTO tracking
@@ -301,6 +331,128 @@ def upsert_tracking(db: sqlite3.Connection, tracking_no: str, month: str,
         tracking.get('source', ''),
         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     ))
+
+    # 写入轨迹后同步订单 state
+    _sync_order_state_from_tracking(db, tracking_no, month)
+
+
+# ─── 轨迹状态 → 订单 state 同步 ───
+
+_TRACKING_TO_ORDER_STATE = {
+    '已签收': 5,
+    '已撤销': -6,
+    '清关中': 3,
+    '已清关': 4,
+    '已揽收': 3,
+    '快件航班批次已创建': 3,
+    '运单已经创建': 2,
+}
+
+_TERMINAL_ORDER_STATES = {-6, 0, 5}  # 不覆盖这些终端状态
+
+# 中国主要城市/地区关键词（用于判断是否已到国内段）
+_CHINA_CITY_KEYWORDS = [
+    '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
+    '天津', '重庆', '苏州', '西安', '长沙', '郑州', '东莞', '青岛',
+    '沈阳', '宁波', '昆明', '大连', '厦门', '合肥', '佛山', '福州',
+    '哈尔滨', '济南', '温州', '长春', '石家庄', '常州', '泉州',
+    '南宁', '贵阳', '南昌', '太原', '烟台', '嘉兴', '南通', '金华',
+    '珠海', '惠州', '徐州', '海口', '乌鲁木齐', '绍兴', '中山',
+    '台州', '兰州', '中国',
+]
+
+
+def _is_china_domestic(ext_track_no: str, latest_desc: str, tracking_details: list = None) -> bool:
+    """判断包裹是否已进入国内配送阶段"""
+    # 信号1: 有国内单号（SF/JDV 开头）
+    if ext_track_no:
+        return True
+    # 信号2: 最新轨迹描述含中国城市
+    if latest_desc:
+        for kw in _CHINA_CITY_KEYWORDS:
+            if kw in latest_desc:
+                return True
+        # 明确是德国城市 → 还在国际段
+        if '杜塞尔' in latest_desc or '法兰克福' in latest_desc:
+            return False
+    # 信号3: trackingDetails 中的站点名含中国城市
+    if tracking_details:
+        for d in tracking_details:
+            if not isinstance(d, dict):
+                continue
+            for field in ('currentSiteName', 'nextSiteName', 'address', 'trackingDesc', 'desc'):
+                val = d.get(field, '') or ''
+                for kw in _CHINA_CITY_KEYWORDS:
+                    if kw in val:
+                        return True
+    return False
+
+
+def _judge_state(tracking_status: str, ext_track_no: str = '',
+                 latest_desc: str = '', tracking_details: list = None) -> int | None:
+    """综合判断：轨迹状态 + 位置信息 → orders.state"""
+    # 直接确定的
+    if tracking_status == '已签收': return 5
+    if tracking_status == '已撤销': return -6
+    if tracking_status == '运单已经创建': return 2
+    if tracking_status == '清关中': return 3
+    if tracking_status == '已清关': return 4
+    if tracking_status in ('已揽收', '快件航班批次已创建'): return 3
+
+    # 模糊状态：靠位置信息判断国际还是国内
+    if tracking_status in ('在途', '离开', '到达', '转寄'):
+        return 4 if _is_china_domestic(ext_track_no, latest_desc, tracking_details) else 3
+
+    return None
+
+
+def _sync_order_state_from_tracking(db: sqlite3.Connection, tracking_no: str, month: str):
+    """根据刚写入的轨迹状态，同步更新 orders.state"""
+    row = db.execute(
+        "SELECT current_status, ext_track_no_cn, latest_desc, tracking_json "
+        "FROM tracking WHERE tracking_no=? AND month=?",
+        (tracking_no, month)
+    ).fetchone()
+    if not row:
+        return
+
+    tracking_status = (row[0] or '').strip()
+    ext_track_no = (row[1] or '').strip()
+    latest_desc = (row[2] or '').strip()
+    tracking_details = []
+    if row[3]:
+        try:
+            tracking_details = json.loads(row[3]) if isinstance(row[3], str) else []
+        except:
+            pass
+
+    new_state = _judge_state(tracking_status, ext_track_no, latest_desc, tracking_details)
+    if new_state is None:
+        return
+
+    # 找到关联的订单
+    order_row = db.execute(
+        "SELECT sn, state FROM orders WHERE global_waybill_sn=?",
+        (tracking_no,)
+    ).fetchone()
+    if not order_row:
+        return
+
+    order_sn, current_state = order_row
+
+    # 终端状态不降级
+    if current_state in _TERMINAL_ORDER_STATES:
+        return
+    if current_state == new_state:
+        return
+
+    # 正常递进：2→3→4→5
+    if current_state in (2, 3, 4) and new_state in (3, 4, 5):
+        if new_state > current_state:
+            db.execute("UPDATE orders SET state=? WHERE sn=?", (new_state, order_sn))
+    # 已撤销：任何非终端状态都可覆盖
+    elif new_state == -6:
+        db.execute("UPDATE orders SET state=? WHERE sn=?", (new_state, order_sn))
 
 def bulk_upsert_tracking(results: dict, month: str, path: str = DB_PATH):
     """批量写入轨迹结果"""
@@ -889,3 +1041,4 @@ if __name__ == '__main__':
 
     init_db()
     print(f"✅ {DB_PATH}")
+# BIND_MOUNT_VERIFIED: 11:29:31

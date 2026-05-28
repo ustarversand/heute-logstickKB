@@ -18,3 +18,14 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      # Python 源码 bind mount — 修改立即生效，无需 rebuild
+      - ./heute_db.py:/app/heute_db.py
+      - ./heute_api.py:/app/heute_api.py
+      - ./heute_sdk.py:/app/heute_sdk.py
+      - ./heute_express_sync.py:/app/heute_express_sync.py
+      - ./heute_cli.py:/app/heute_cli.py
+      - ./heute_track_api.py:/app/heute_track_api.py
+      - ./batch_track_hybrid.py:/app/batch_track_hybrid.py
+      - ./scan_anomalies.py:/app/scan_anomalies.py
+      - ./dashboard/app.py:/app/dashboard/app.py
+      - ./dashboard/templates/index.html:/app/dashboard/templates/index.html

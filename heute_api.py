@@ -118,9 +118,9 @@ class TrackClient:
     # ─── 单条查询 ────────────────────────────────────────────────────────
 
     def query(self, gw: str) -> dict:
-        """查单个国际运单号的轨迹"""
+        """查单个国际运单号的轨迹（完整 timeline）"""
         self._ensure_token()
-        url = f"{TRACK_BASE}/tracking?trackingNo={gw}"
+        url = f"{TRACK_BASE}/logistics-tracking?trackingNo={gw}&page=1&size=100"
         req = urllib.request.Request(
             url,
             headers={**_TRACK_HEADERS, "Authorization": f"Bearer {self._token}"},
@@ -131,17 +131,34 @@ class TrackClient:
             records = data.get("data", {}).get("records", [])
             if not records:
                 return {}
-            r = records[0]
+            # 最近一条（含当前状态信息）
+            latest = records[0]
+            # 全部 records 构成完整 timeline
+            tracking_details = []
+            for r in reversed(records):  # 按时间正序
+                entry = {
+                    "trackingTime": r.get("trackingTime", ""),
+                    "trackingDesc": r.get("trackingDesc", ""),
+                    "currentSiteName": r.get("currentSiteName", ""),
+                    "nextSiteName": r.get("nextSiteName", ""),
+                    "statusName": r.get("platformTrackingSubStatusName", ""),
+                    "signerName": r.get("signerName", ""),
+                    "signerTypeDesc": str(r.get("signerType", "")),
+                    "contact": r.get("contact", ""),
+                    "contactPhone": r.get("contactPhone", ""),
+                    "address": r.get("address", ""),
+                }
+                tracking_details.append(entry)
             return {
-                "trackingNo": r.get("trackingNo", ""),
-                "extTrackNoCn": r.get("extTrackNoCn", ""),
-                "logisticsCompany": r.get("cnLogisticsCompany", r.get("logisticsCompany", "")),
-                "currentStatus": r.get("platformTrackingStatusName", ""),
-                "latestDesc": (r.get("platformTrackingStatusText", "") or "")[:200],
-                "latestTime": r.get("platformTrackingStatusTime", ""),
-                "subscriptionSource": r.get("subscriptionSource", ""),
-                "isSubscribed": r.get("isSubscribed", 0),
-                "trackingDetails": r.get("trackingDetails", []),
+                "trackingNo": latest.get("trackingNo", ""),
+                "extTrackNoCn": latest.get("extTrackNoCn", ""),
+                "logisticsCompany": latest.get("cnLogisticsCompany", latest.get("logisticsCompany", "")),
+                "currentStatus": latest.get("platformTrackingStatusName", ""),
+                "latestDesc": (latest.get("trackingDesc", "") or "")[:200],
+                "latestTime": latest.get("trackingTime", ""),
+                "subscriptionSource": latest.get("dataSource", ""),
+                "isSubscribed": 1,
+                "trackingDetails": tracking_details,
             }
         except Exception:
             return {}

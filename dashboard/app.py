@@ -4,7 +4,7 @@ import json, os, sys, time, csv, hashlib, urllib, uvicorn, subprocess, shutil, s
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from fastapi import FastAPI, Query, HTTPException, Request, Body, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from typing import Optional
@@ -49,7 +49,7 @@ def get_sender_from_session(request):
     role = request.session.get('role', '')
     return None if role == 'admin' else request.session.get('sender', None)
 def format_state(s):
-    return {0:'已作废',1:'待支付',2:'待入库',3:'国际运输',4:'国内配送',5:'签收'}.get(s, f'状态{s}')
+    return {0:'已作废',1:'待支付',2:'待入库',3:'国际运输',4:'国内配送',5:'签收',-6:'已撤销'}.get(s, f'状态{s}')
 
 # ─── Auth ───
 @app.get('/api/auth/me')
@@ -77,23 +77,119 @@ def auth_logout(request: Request):
 @app.get('/api/senders')
 def api_senders(): return {'senders': get_senders()}
 
-# ─── Stats ───
-@app.get('/api/stats')
-def get_stats(request: Request, month: str = 'may'):
-    sender = get_sender_from_session(request)
+# ─── Stats (with cache) ───
+_STATS_CACHE = {}
+_STATS_CACHE_TTL = 5  # seconds
+
+def _get_stats_cached(month, sender):
+    import hashlib
+    key = hashlib.md5(f"{month}:{sender}".encode()).hexdigest()
+    now = time.time()
+    if key in _STATS_CACHE:
+        ts, data = _STATS_CACHE[key]
+        if now - ts < _STATS_CACHE_TTL:
+            return data
+    data = _compute_stats(month, sender)
+    _STATS_CACHE[key] = (now, data)
+    return data
+
+def _apply_overrides_to_track_status(month, sender, track_status):
+    """Overlay manual status overrides onto the track_status distribution dict"""
+    try:
+        import sqlite3
+        from heute_db import DB_PATH
+        db = sqlite3.connect(DB_PATH)
+        if sender:
+            rows = db.execute("""
+                SELECT ms.manual_status, t.current_status
+                FROM order_status_overrides ms
+                JOIN orders o ON ms.sn = o.sn AND ms.month = o.month
+                LEFT JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month
+                WHERE ms.month=? AND o.sender_name=?
+            """, (month, sender)).fetchall()
+        else:
+            rows = db.execute("""
+                SELECT ms.manual_status, t.current_status
+                FROM order_status_overrides ms
+                JOIN orders o ON ms.sn = o.sn AND ms.month = o.month
+                LEFT JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month
+                WHERE ms.month=?
+            """, (month,)).fetchall()
+        db.close()
+        for manual_status, old_status in rows:
+            # Strip emoji prefix: "✅ 已签收" → "已签收"
+            clean = manual_status.split(' ', 1)[-1] if ' ' in manual_status else manual_status
+            # Decrement old tracking-based status (skip if no tracking record)
+            if old_status:
+                track_status[old_status] = max(0, track_status.get(old_status, 0) - 1)
+            elif old_status is None:
+                # No tracking record — nothing to decrement
+                pass
+            # Increment manual status
+            track_status[clean] = track_status.get(clean, 0) + 1
+    except Exception:
+        import traceback; traceback.print_exc()
+
+def _compute_stats(month, sender):
+    from heute_db import get_orders, get_tracking_status_dist, get_anomaly_counts
     orders = get_orders(month, sender)
     state_dist = Counter()
     track_status = get_tracking_status_dist(month, sender)
+    _apply_overrides_to_track_status(month, sender, track_status)
     for o in orders: state_dist[format_state(o.get('state'))] += 1
     cancelled_count = sum(1 for o in orders if o.get('state') == -6)
     signed_total = track_status.get('已签收', 0) + track_status.get('签收(国内确认)', 0)
     signed_domestic_only = track_status.get('签收(国内确认)', 0)
     anomalies = get_anomaly_counts(month, sender)
     abnormal_count = anomalies.get('severe', 0)
-    return {'total_orders': len(orders), 'tracked': sum(track_status.values()),
+    tracked = sum(track_status.values())
+    # Collect abnormal orders for the 异常/问题件 tab
+    abnormal_orders = []
+    for o in orders:
+        st = o.get('state', 0)
+        if st not in (5, -6, 0):  # not 签收/已撤销/已作废
+            abnormal_orders.append({
+                'sn': o.get('sn',''),
+                'consignee': o.get('consignee_name',''),
+                'state': format_state(st),
+                'sender': o.get('sender_name',''),
+                'tracking': o.get('global_waybill_sn','') or '',
+                'created': (o.get('creation_time','') or '')[:19].replace('T',' ') if o.get('creation_time') else ''
+            })
+    # Also add orders from anomalies if available
+    try:
+        from heute_db import get_anomalies
+        severe_orders = get_anomalies(month, match_filter='severe', sender=sender)
+        existing_sns = {a['sn'] for a in abnormal_orders if 'sn' in a}
+        for s in severe_orders:
+            sn = s.get('order_sn') or s.get('sn') or ''
+            if sn and sn not in existing_sns:
+                abnormal_orders.append({
+                    'sn': sn,
+                    'consignee': s.get('consignee_name',''),
+                    'state': '问题件',
+                    'sender': s.get('sender_name',''),
+                    'tracking': s.get('intl_tracking','') or '',
+                    'created': ''
+                })
+    except: pass
+    return {'total_orders': len(orders), 'tracked': tracked, 'untracked': len(orders) - tracked,
             'tracking_status': track_status, 'state_distribution': dict(state_dist),
             'cancelled_count': cancelled_count, 'signed_total': signed_total,
-            'signed_domestic_only': signed_domestic_only, 'abnormal_count': abnormal_count}
+            'signed_domestic_only': signed_domestic_only, 'abnormal_count': abnormal_count,
+            'abnormal_orders': abnormal_orders}
+
+# ─── Stats ───
+@app.get('/api/stats')
+def get_stats(request: Request, month: str = 'may'):
+    sender = get_sender_from_session(request)
+    return _get_stats_cached(month, sender)
+
+@app.get('/api/stats/force')
+def get_stats_force(request: Request, month: str = 'may'):
+    """强制刷新统计（跳过缓存）"""
+    sender = get_sender_from_session(request)
+    return _compute_stats(month, sender)
 
 # ─── Orders ───
 @app.get('/api/orders/recent')
@@ -101,6 +197,207 @@ def get_recent_orders(request: Request, limit: int = 50, month: str = 'may'):
     sender = get_sender_from_session(request)
     orders = get_orders(month, sender)
     return sorted(orders, key=lambda o: o.get('creation_time','') or '', reverse=True)[:limit]
+
+@app.get("/api/orders/query")
+def api_orders_query(request: Request, page: int = 1, per_page: int = 50,
+                     q: str = "", status: str = "", sender: str = "",
+                     date_from: str = "", date_to: str = "", month: str = "may",
+                     sort_by: str = "creation_time", sort_order: str = "desc"):
+    logged_sender = get_sender_from_session(request)
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        where_clauses = ["o.month=?"]
+        params = [month]
+        if logged_sender:
+            where_clauses.append("o.sender_name=?")
+            params.append(logged_sender)
+        elif sender:
+            where_clauses.append("o.sender_name=?")
+            params.append(sender)
+        if q:
+            like_sql = "(o.sn LIKE ? OR o.consignee_name LIKE ? OR o.global_waybill_sn LIKE ?)"
+            where_clauses.append(like_sql)
+            kw = "%" + q + "%"
+            params.extend([kw, kw, kw])
+        state_map = {"作废":0,"待支付":1,"国际运输":3,"国内配送":4,"签收":5,"已签收":5,"已撤销":-6}
+        track_status_map = {"清关中":["清关中","已清关"],"国际运输":["在途","离开","已揽收","快件航班批次已创建","国际运输"],"国内配送":["到达","转寄","派件中"],"问题件":["问题件"],"其他":["其他"]}
+        if status:
+            if status == "待入库":
+                where_clauses.append("(o.global_waybill_sn IS NOT NULL AND o.global_waybill_sn != '' AND (t.current_status IS NULL OR t.current_status = '运单已经创建'))")
+            elif status in track_status_map:
+                ts = track_status_map[status]
+                placeholders = ",".join(["?" for _ in ts])
+                where_clauses.append("t.current_status IN (" + placeholders + ")")
+                params.extend(ts)
+            else:
+                sv = state_map.get(status)
+                if sv is not None:
+                    where_clauses.append("o.state=?")
+                    params.append(sv)
+        if date_from:
+            where_clauses.append("o.creation_time >= ?")
+            params.append(date_from)
+        if date_to:
+            where_clauses.append("o.creation_time <= ?")
+            params.append(date_to + " 23:59:59")
+        where_sql = " AND ".join(where_clauses)
+        sort_columns = {"sn":"o.sn","state":"o.state","sender_name":"o.sender_name",
+                        "creation_time":"o.creation_time","consignee_name":"o.consignee_name",
+                        "global_waybill_sn":"o.global_waybill_sn"}
+        col = sort_columns.get(sort_by, "o.creation_time")
+        ord_dir = "DESC" if sort_order == "desc" else "ASC"
+        # Use LEFT JOIN in COUNT query too (for tracking status filters)
+        has_track_filter = any("t." in w for w in where_clauses)
+        from_sql = " FROM orders o LEFT JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month " if has_track_filter else " FROM orders o "
+        count_row = db.execute("SELECT COUNT(*) as cnt" + from_sql + "WHERE " + where_sql, params).fetchone()
+        total = count_row["cnt"] if count_row else 0
+        offset = (page - 1) * per_page
+        query = """SELECT o.sn, o.month, o.global_waybill_sn, o.temp_line_sn as domestic_no,
+                    o.consignee_name, o.sender_name, o.state, o.weight,
+                    o.creation_time, o.line_name, o.platform_sn,
+                    t.current_status as track_status,
+                    t.ext_track_no_cn as track_company,
+                    t.latest_desc as latest_desc,
+                    t.queried_at, t.tracking_json,
+                    ms.manual_status
+                    FROM orders o
+                    LEFT JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month
+                    LEFT JOIN order_status_overrides ms ON o.sn = ms.sn AND ms.month = o.month
+                    WHERE """ + where_sql + """
+                    ORDER BY """ + col + " " + ord_dir + """
+                    LIMIT ? OFFSET ?"""
+        params_ext = params + [per_page, offset]
+        rows = db.execute(query, params_ext).fetchall()
+        items = []
+        for r in rows:
+            d = dict(r)
+            d["state_name"] = format_state(d["state"])
+            d["track_city"] = extract_city_from_desc(d.get("latest_desc", ""))
+            tj = d.get("tracking_json", "[]")
+            try:
+                d["detail_count"] = len(json.loads(tj)) if tj else 0
+            except:
+                d["detail_count"] = 0
+            if "tracking_json" in d:
+                del d["tracking_json"]
+            items.append(d)
+        by_status = {}
+        try:
+            db2 = sqlite3.connect(DB_PATH)
+            db2.row_factory = sqlite3.Row
+            # 按轨迹状态分组统计
+            # 待入库 = 有运单号(global_waybill_sn)但无轨迹数据(current_status IS NULL)
+            track_map_sql = """
+                CASE
+                    WHEN o.state=-6 THEN '已撤销'
+                    WHEN o.state=0 THEN '已作废'
+                    WHEN t.current_status IN ('已签收','签收(国内确认)','签收') THEN '已签收'
+                    WHEN t.current_status IN ('清关中','已清关') THEN '清关中'
+                    /* 待入库：有运单号但物流还没开始走 */
+                    WHEN t.current_status IN ('运单已经创建') THEN '待入库'
+                    WHEN t.current_status IN ('在途','离开','已揽收','快件航班批次已创建','国际运输') THEN '国际运输'
+                    WHEN t.current_status IN ('到达','转寄','派件中') THEN '国内配送'
+                    WHEN t.current_status IN ('问题件') THEN '问题件'
+                    WHEN t.current_status IN ('其他') THEN '其他'
+                    /* 以下 current_status IS NULL */
+                    WHEN o.global_waybill_sn IS NOT NULL AND o.global_waybill_sn != '' THEN '待入库'
+                    WHEN o.state=1 THEN '待支付'
+                    WHEN o.state=2 THEN '待入库'
+                    WHEN o.state=3 THEN '国际运输'
+                    WHEN o.state=4 THEN '国内配送'
+                    WHEN o.state=5 THEN '已签收'
+                    ELSE '其他'
+                END
+            """
+            rows = db2.execute(
+                "SELECT " + track_map_sql + " as status_group, COUNT(*) as cnt FROM orders o "
+                "LEFT JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month "
+                "WHERE " + where_sql + " GROUP BY status_group", params
+            ).fetchall()
+            for r in rows:
+                by_status[r["status_group"]] = r["cnt"]
+            db2.close()
+        except:
+            pass
+        db.close()
+        return {"items": items, "total": total, "page": page, "per_page": per_page, "by_status": by_status}
+    except Exception as e:
+        raise HTTPException(500, "查询失败: " + str(e))
+
+@app.get("/api/orders/export")
+def api_orders_export(request: Request, q: str = "", status: str = "",
+                      sender: str = "", date_from: str = "", date_to: str = "",
+                      month: str = "may", ids: str = ""):
+    logged_sender = get_sender_from_session(request)
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        where_clauses = ["o.month=?"]
+        params = [month]
+        if logged_sender:
+            where_clauses.append("o.sender_name=?")
+            params.append(logged_sender)
+        elif sender:
+            where_clauses.append("o.sender_name=?")
+            params.append(sender)
+        if q:
+            like_sql = "(o.sn LIKE ? OR o.consignee_name LIKE ? OR o.global_waybill_sn LIKE ?)"
+            where_clauses.append(like_sql)
+            kw = "%" + q + "%"
+            params.extend([kw, kw, kw])
+        state_map = {"作废":0,"待支付":1,"国际运输":3,"国内配送":4,"签收":5,"已签收":5,"已撤销":-6}
+        if status:
+            if status == "待入库":
+                where_clauses.append("(o.global_waybill_sn IS NOT NULL AND o.global_waybill_sn != '' AND (t.current_status IS NULL OR t.current_status = '运单已经创建'))")
+            else:
+                sv = state_map.get(status)
+                if sv is not None:
+                    where_clauses.append("o.state=?")
+                    params.append(sv)
+        if ids:
+            id_list = ids.split(",")
+            placeholders = ",".join(["?" for _ in id_list])
+            where_clauses.append("o.sn IN (" + placeholders + ")")
+            params.extend(id_list)
+        where_sql = " AND ".join(where_clauses)
+        rows = db.execute("""SELECT o.sn, o.global_waybill_sn, o.temp_line_sn, o.consignee_name,
+            o.sender_name, o.state, o.weight, o.creation_time, o.line_name, o.platform_sn,
+            t.current_status, t.ext_track_no_cn, t.latest_desc
+            FROM orders o LEFT JOIN tracking t ON o.global_waybill_sn=t.tracking_no AND t.month=o.month
+            WHERE """ + where_sql + """ ORDER BY o.creation_time DESC""", params).fetchall()
+        import io, csv
+        output = io.StringIO()
+        w = csv.writer(output)
+        w.writerow(["订单号","国际单号","国内单号","收件人","寄件人","状态","重量","创建时间","线路","平台单号","轨迹状态","物流公司","最新轨迹","轨迹城市"])
+        for r in rows:
+            city = extract_city_from_desc(r["latest_desc"] or "")
+            w.writerow([r["sn"], r["global_waybill_sn"], r["temp_line_sn"], r["consignee_name"],
+                       r["sender_name"], format_state(r["state"]), r["weight"], r["creation_time"],
+                       r["line_name"], r["platform_sn"], r["current_status"], r["ext_track_no_cn"],
+                       (r["latest_desc"] or "")[:80], city])
+        db.close()
+        csv_data = output.getvalue()
+        return Response(content=csv_data, media_type="text/csv",
+                       headers={"Content-Disposition": "attachment; filename=orders_" + month + ".csv"})
+    except Exception as e:
+        raise HTTPException(500, "导出失败: " + str(e))
+
+
+@app.get("/api/orders/{sn}/products")
+def api_order_products(sn: str):
+    """获取订单产品明细（从货易达API实时查）"""
+    try:
+        from heute_api import HeuteAPI
+        api = HeuteAPI()
+        detail = api.order.detail(sn)
+        if not detail or not detail.get('sn'):
+            return {"items": [], "error": "API未返回数据"}
+        products = detail.get('orderDetails') or detail.get('orderDetailsList') or []
+        return {"items": products, "sn": sn}
+    except Exception as e:
+        import traceback
+        return {"items": [], "error": str(e), "trace": traceback.format_exc()}
 
 @app.get('/api/orders/untracked')
 def get_untracked_orders(request: Request, month: str = 'may'):
@@ -126,50 +423,164 @@ def get_tracking_results(request: Request, page: int = 1, per_page: int = 50, st
         all_items, _ = get_tracking(month, status_filter, 1, 999999)
         items = [i for i in all_items if i.get('tracking',{}).get('tracking_no','') in sender_gws]
         total = len(items)
-        start = (page-1)*per_page
-        items = items[start:start+per_page]
     else:
         items, total = get_tracking(month, status_filter, page, per_page)
-    # Build order lookup for consignee
-    orders_list = get_orders(month)
-    order_map = {}
-    for o in orders_list:
-        sn = o.get('sn')
-        if sn: order_map[sn] = o
-    def extract_location(desc):
-        m = re.search(r'【(.+?)】', desc or '')
-        return m.group(1) if m else ''
-    def guess_carrier(source, tracking_no, domestic_no):
-        if source: return source
-        dn = domestic_no or tracking_no
-        if dn.startswith('JDV'): return '京东快递'
-        if dn.startswith('SF'): return '顺丰速运'
-        return ''
-    result_items = []
-    for i in items:
-        trk = i.get('tracking', {})
-        tn = trk.get('tracking_no', '')
-        order_sn = trk.get('order', {}).get('sn', '')
-        order_info = order_map.get(order_sn, {})
-        details = trk.get('trackingDetails', [])
-        desc = trk.get('latest_desc', '')
-        result_items.append({
-            'tracking_no': tn,
-            'order_sn': order_sn,
-            'consignee': order_info.get('consignee_name', ''),
-            'status': trk.get('currentStatus', trk.get('current_status', '')),
-            'location': extract_location(desc),
-            'company': guess_carrier(trk.get('source', ''), tn, trk.get('ext_track_no_cn', '')),
-            'domestic_no': trk.get('ext_track_no_cn', '') or trk.get('domestic_no', ''),
-            'detail_count': len(details),
-            'details': details,
-            'queried_at': trk.get('queried_at', ''),
-        })
-    return {'items': result_items, 'total': total, 'page': page, 'per_page': per_page}
+    page_start = (page - 1) * per_page
+    page_items = items[page_start:page_start + per_page]
+    return {'items': page_items, 'total': total, 'page': page, 'per_page': per_page, 'month': month}
+# ─── Tracking Live ───
+def extract_city_from_desc(desc):
+    """从轨迹描述中提取城市名"""
+    if not desc: return ''
+    m = re.search(r'【([^】]+)】', desc)
+    if m:
+        loc = m.group(1)
+        if not re.search(r'\d{11}', loc) and '电话' not in loc:
+            city = re.search(r'([\u4e00-\u9fff]{2,4}(?:市|区|县|镇))', loc)
+            if city: return city.group(1)
+            simple = re.search(r'([\u4e00-\u9fff]{2,4})', loc)
+            if simple: return simple.group(1)
+    return ''
+
+@app.get('/api/tracking/query-live')
+def api_tracking_live_query(tracking_no: str = ''):
+    tn = tracking_no.strip()
+    if not tn: return {'found': False, 'error': '请输入运单号'}
+
+    # ❶ 优先从 DB 缓存读取（已有 trackingDetails 就不用重新查）
+    try:
+        db = sqlite3.connect(DB_PATH)
+        row = db.execute(
+            "SELECT current_status, latest_desc, latest_time, ext_track_no_cn, tracking_json, source FROM tracking WHERE tracking_no=?",
+            (tn,)
+        ).fetchone()
+        if row and row[4]:  # tracking_json 不为空
+            details = json.loads(row[4]) if isinstance(row[4], str) else []
+            if details and len(details) > 0:
+                db.close()
+                return {
+                    'found': True, 'tracking_no': tn, 'cached': True,
+                    'status_name': better_status(row[0] or '', row[1] or ''),
+                    'status_text': row[1] or '',
+                    'city': extract_city_from_desc(row[1] or ''),
+                    'trackingDetails': details,
+                    'extTrackNoCn': row[3] or '',
+                }
+        db.close()
+    except:
+        pass
+
+    # ❷ 快速 Track API
+    from heute_api import HeuteAPI
+    try:
+        api = HeuteAPI()
+        result = api.track.query(tn)
+    except:
+        result = {}
+
+    # 先从 HeuteAPI 提取trackingDetails保底（SDK OCR失败时还能有明细）
+    tracking_details = []
+    api_details = result.get('trackingDetails', [])
+    if api_details:
+        for d in api_details:
+            ts = d.get('trackingTime', '') or d.get('time', '')
+            desc = d.get('trackingDesc', '') or d.get('desc', '')
+            site = d.get('currentSiteName', '') or d.get('address', '') or d.get('location', '')
+            tracking_details.append({
+                'time': ts, 'desc': desc, 'location': site,
+                'trackingTime': ts, 'trackingDesc': desc, 'address': site,
+                'currentSiteName': d.get('currentSiteName', ''),
+                'nextSiteName': d.get('nextSiteName', ''),
+                'statusName': d.get('statusName', ''),
+                'signerName': d.get('signerName', ''),
+                'signerTypeDesc': d.get('signerTypeDesc', ''),
+                'contact': d.get('contact', ''),
+                'contactPhone': d.get('contactPhone', ''),
+            })
+    current_status = result.get('currentStatus', '')
+    latest_desc = result.get('latestDesc', '')
+    ext_no = result.get('extTrackNoCn', '')
+    logistics_co = result.get('logisticsCompany', '')
+
+    # ❸ SDK 查完整轨迹（仅当 HeuteAPI 未返回数据时作为兜底）— 最多3次尝试+5秒超时
+    sdk_error = ''
+    if not tracking_details:
+        try:
+            from heute_sdk import track_package
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(track_package, tn, max_attempts=3, verbose=False)
+                try:
+                    pkg = fut.result(timeout=10)
+                except concurrent.futures.TimeoutError:
+                    sdk_error = 'SDK查询超时(10s)'
+                    pkg = None
+            if pkg and pkg.get('trackingNo') and 'error' not in pkg:
+                details_raw = pkg.get('trackingDetails', [])
+                if details_raw:
+                    for d in details_raw:
+                        ts = d.get('trackingTime', '')
+                        desc = d.get('trackingDesc', '')
+                        site = d.get('currentSiteName', '') or d.get('address', '')
+                        entry = {
+                            'time': ts, 'desc': desc,
+                            'location': site,
+                            'trackingTime': ts, 'trackingDesc': desc,
+                            'address': site,
+                            'currentSiteName': d.get('currentSiteName', ''),
+                            'nextSiteName': d.get('nextSiteName', ''),
+                            'statusName': d.get('statusName', ''),
+                            'signerName': d.get('signerName', ''),
+                            'signerTypeDesc': d.get('signerTypeDesc', ''),
+                            'contact': d.get('contact', ''),
+                            'contactPhone': d.get('contactPhone', ''),
+                        }
+                        tracking_details.append(entry)
+                    current_status = pkg.get('currentStatus', current_status)
+                    latest_desc = details_raw[0].get('trackingDesc', latest_desc) if details_raw else latest_desc
+                    ext_no = pkg.get('extTrackNoCn', ext_no)
+                    logistics_co = pkg.get('logisticsCompany', logistics_co)
+        except Exception as e:
+            sdk_error = str(e)[:200]
+    
+    # 保存到数据库（包含完整trackingDetails）
+    try:
+        db = sqlite3.connect(DB_PATH)
+        from heute_db import upsert_tracking
+        now = datetime.now()
+        _MONTH_NAMES = {4:'apr',5:'may',6:'june',7:'july',8:'aug',9:'sep',10:'oct',11:'nov',12:'dec',1:'jan',2:'feb',3:'mar'}
+        mo = _MONTH_NAMES.get(now.month, 'may')
+        # 构造包含trackingDetails的完整结果
+        full_result = {
+            'trackingNo': tn,
+            'currentStatus': current_status,
+            'latestDesc': latest_desc,
+            'latestTime': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'extTrackNoCn': ext_no,
+            'logisticsCompany': logistics_co,
+            'trackingDetails': tracking_details,
+        }
+        upsert_tracking(db, tn, mo, full_result)
+        db.commit(); db.close()
+    except:
+        pass
+    
+    city = extract_city_from_desc(latest_desc)
+    return {
+        'found': True,
+        'tracking_no': tn,
+        'status_name': better_status(current_status, latest_desc),
+        'status_text': latest_desc,
+        'city': city,
+        'trackingDetails': tracking_details,
+        'extTrackNoCn': ext_no,
+        'logisticsCompany': logistics_co,
+        'sdk_error': sdk_error or None,
+    }
 
 @app.get('/api/tracking/{tracking_no}')
 def query_tracking(tracking_no: str, month: str = None):
-    for m in ([month] if month else ['may','april']):
+    for m in ([month] if month else ['may','apr']):
         r = get_tracking_by_no(tracking_no, m)
         if r: return r
     raise HTTPException(404, f'未找到 {tracking_no}')
@@ -219,29 +630,12 @@ def better_status(status_name, status_text=''):
 
 # ─── Anomalies ───
 @app.get('/api/anomalies')
-def get_anomalies_endpoint(request: Request, month: str = 'april', match_filter: str = None):
+def get_anomalies_endpoint(request: Request, month: str = 'may', match_filter: str = None):
     sender = get_sender_from_session(request)
     anomalies = get_anomalies(month, match_filter=match_filter, sender=sender)
     counts = Counter(a.get('match') for a in anomalies)
     return {'total': len(anomalies), 'severe': counts.get('severe',0), 'warning': counts.get('warning',0),
             'ok': counts.get('ok',0), 'items': anomalies}
-
-# ─── Tracking Live ───
-@app.get('/api/tracking/query-live')
-def api_tracking_live_query(tracking_no: str = ''):
-    tn = tracking_no.strip()
-    if not tn: return {'found': False, 'error': '请输入运单号'}
-    from heute_api import HeuteAPI
-    try:
-        api = HeuteAPI()
-        result = api.track.query(tn)
-        if result and result.get('trackingNo'):
-            return {'found': True, 'tracking_no': result.get('trackingNo',tn),
-                    'status_name': better_status(result.get('currentStatus',''), result.get('latestDesc','')),
-                    'status_text': result.get('latestDesc','')}
-        return {'found': False, 'error': '未找到此单号'}
-    except Exception as e:
-        return {'found': False, 'error': str(e)}
 
 # ─── Tracking Search ───
 @app.get('/api/tracking/search')
@@ -357,6 +751,15 @@ def start_track_query(month: str = 'may'):
                         }
                         with lock:
                             upsert_tracking(db, tn, month, tracking_data, {'sn': o.get('sn','')})
+                            # 自动标记：轨迹有位置且当前状态"其他"→设为国际运输
+                            if tracking_data.get('trackingDetails'):
+                                for _d in tracking_data['trackingDetails']:
+                                    _loc = _d.get('currentSiteName','') or _d.get('address','')
+                                    if _loc:
+                                        _cur = db.execute("SELECT current_status FROM tracking WHERE tracking_no=? AND month=?", (tn, month)).fetchone()
+                                        if _cur and (_cur[0] or '') == '其他':
+                                            db.execute("UPDATE tracking SET current_status=? WHERE tracking_no=? AND month=?", ('国际运输', tn, month))
+                                        break
                             queried[0] += 1
                         return tracking_data
                 except:
@@ -402,6 +805,69 @@ def get_track_progress():
 
 @app.get('/api/tracking/query-untracked/status')
 def get_track_status(): return {'busy': _batch_in_progress}
+
+# ─── State Reconcile (状态同步) ───
+_reconcile_lock = threading.Lock()
+_reconcile_in_progress = False
+
+@app.post('/api/tracking/reconcile-states')
+def reconcile_states(month: str = 'all'):
+    """根据轨迹状态批量更新 orders.state"""
+    global _reconcile_in_progress
+    with _reconcile_lock:
+        if _reconcile_in_progress:
+            raise HTTPException(429, '已有同步任务运行中')
+        _reconcile_in_progress = True
+
+    def _run():
+        global _reconcile_in_progress
+        try:
+            import sqlite3
+            db = sqlite3.connect(DB_PATH)
+            from heute_db import _judge_state
+
+            months = ['apr', 'may'] if month == 'all' else [month]
+            total_updated = 0
+            for mo in months:
+                rows = db.execute("""
+                    SELECT o.sn, o.state, o.global_waybill_sn,
+                           t.current_status, t.ext_track_no_cn, t.latest_desc, t.tracking_json
+                    FROM orders o
+                    JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month
+                    WHERE o.month=?
+                """, (mo,)).fetchall()
+
+                updated = 0
+                for r in rows:
+                    sn, cur_state, gws, cur_status, ext_no, desc, tj = r
+                    details = []
+                    if tj:
+                        try:
+                            details = json.loads(tj) if isinstance(tj, str) else []
+                        except: pass
+
+                    new_state = _judge_state(cur_status or '', ext_no or '', desc or '', details)
+                    if new_state is None or new_state == cur_state:
+                        continue
+                    db.execute("UPDATE orders SET state=? WHERE sn=?", (new_state, sn))
+                    updated += 1
+
+                db.commit()
+                total_updated += updated
+
+            db.close()
+            return {'ok': True, 'updated': total_updated}
+        except Exception as e:
+            return {'ok': False, 'error': str(e)}
+        finally:
+            _reconcile_in_progress = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {'ok': True, 'message': '后台状态同步已启动'}
+
+@app.get('/api/tracking/reconcile-states/status')
+def get_reconcile_status():
+    return {'busy': _reconcile_in_progress}
 
 # ─── Order Sync (实时订单同步) ───
 def _write_order_progress(data: dict):
@@ -472,18 +938,30 @@ def get_order_sync_status():
 # ─── Order Detail ───
 @app.get('/api/order/{sn}')
 def get_order_detail(sn: str, month: str = 'may'):
-    orders = get_orders(month)
-    for o in orders:
-        if o.get('sn') == sn:
-            result = dict(o)
-            try:
-                from heute_api import HeuteAPI
-                detail = HeuteAPI().order.detail(sn)
-                if detail and detail.get('sn'):
-                    result['_api_detail'] = True
-            except: pass
-            return result
-    raise HTTPException(404, f'订单 {sn} 未找到')
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    row = db.execute("""
+        SELECT o.*, ms.manual_status, ms.updated_at as manual_status_updated,
+               t.current_status as track_status
+        FROM orders o
+        LEFT JOIN order_status_overrides ms ON o.sn = ms.sn AND ms.month = o.month
+        LEFT JOIN tracking t ON o.global_waybill_sn = t.tracking_no AND t.month = o.month
+        WHERE o.sn=? AND o.month=?
+    """, (sn, month)).fetchone()
+    db.close()
+    if not row:
+        raise HTTPException(404, f'订单 {sn} 未找到')
+    result = dict(row)
+    # Compute state_name from state integer
+    state = result.get('state')
+    result['state_name'] = format_state(state) if state is not None else None
+    try:
+        from heute_api import HeuteAPI
+        detail = HeuteAPI().order.detail(sn)
+        if detail and detail.get('sn'):
+            result['_api_detail'] = True
+    except: pass
+    return result
 
 # ─── Manual Status ───
 @app.put('/api/orders/manual-status')
@@ -513,7 +991,7 @@ def api_get_after_sales(request: Request, month: str = 'may', status: str = None
 @app.get('/api/after-sales/stats')
 def api_after_sales_stats(request: Request, month: str = 'may'):
     sender = get_sender_from_session(request)
-    return {'total': 0, 'by_status': {}, 'by_type': {}}
+    return get_after_sales_stats(month, DB_PATH)
 
 @app.post('/api/after-sales')
 def api_create_after_sales(data: dict = Body(...)):
@@ -558,40 +1036,130 @@ def get_finance_daily_detail(month: str = 'may', date: str = None):
 
 @app.get('/api/finance/by-product')
 def get_finance_by_product(month: str = 'may'):
-    """产品维度统计（从订单描述中提取产品名）"""
+    """物流产品占比（按line_name统计，用于成本分析）"""
     with DB(DB_PATH) as db:
         rows = db.execute(
-            "SELECT money_changed, description FROM finance_logs WHERE month=?",
+            "SELECT line_name, COUNT(*) as cnt FROM orders WHERE month=? AND state NOT IN (0,-6) AND line_name != '' GROUP BY line_name ORDER BY cnt DESC",
             (month,)
         ).fetchall()
-        products = []
-        total_orders = len(rows)
+        products = [{'name': r['line_name'], 'count': r['cnt']} for r in rows]
+        total_orders = sum(r['cnt'] for r in rows)
         return {'products': products, 'cached': total_orders, 'total_orders': total_orders}
 
 @app.get('/api/finance/overweight')
 def get_overweight(month: str = 'may'):
-    """超重产品统计"""
+    """超重产品统计 — 按线路聚合"""
     with DB(DB_PATH) as db:
-        rows = db.execute(
-            "SELECT money_changed, description FROM finance_logs WHERE month=? AND description LIKE '%超重%'",
-            (month,)
-        ).fetchall()
-        return {'products': [{'money_changed': r[0], 'description': r[1]} for r in rows]}
+        # 总订单数 per 线路（含无超重的订单）
+        total_orders_map = {}
+        for r in db.execute("""
+            SELECT line_name, COUNT(*) as cnt
+            FROM orders WHERE month=? AND line_name IS NOT NULL
+            GROUP BY line_name
+        """, (month,)).fetchall():
+            total_orders_map[r[0]] = r[1]
+
+        # 有超重扣款的订单数 per 线路 + 金额统计
+        rows = db.execute("""
+            SELECT
+                COALESCE(o.line_name, '未知线路') as name,
+                COUNT(DISTINCT f.order_sn) as surcharge_orders,
+                COUNT(*) as total_records,
+                SUM(f.money_changed) / 100.0 as total_surcharge,
+                AVG(o.weight) / 1000.0 as avg_weight_kg,
+                MAX(o.weight) / 1000.0 as max_weight_kg
+            FROM finance_logs f
+            LEFT JOIN orders o ON CAST(f.order_sn AS TEXT) = o.sn
+            WHERE f.month=?
+            GROUP BY name
+            ORDER BY total_surcharge ASC
+        """, (month,)).fetchall()
+
+        products = []
+        total_orders_all = 0
+        total_surcharge_all = 0.0
+        for r in rows:
+            name = r[0] or '未知线路'
+            surcharge_orders = r[1] or 0
+            total_records = r[2] or 0
+            surcharge_amt = float(r[3] or 0)
+            avg_weight = float(r[4] or 0)
+            max_weight = float(r[5] or 0)
+            line_orders = total_orders_map.get(name, surcharge_orders)
+            rate = round((surcharge_orders / line_orders * 100) if line_orders else 0, 1)
+
+            # 打包建议
+            suggestion = ''
+            if rate >= 60:
+                suggestion = '⚠️ 超重偏多，建议检查包装标准'
+            elif rate >= 30:
+                suggestion = '⚡ 超重较多，建议优化装箱方案'
+            elif avg_weight > 3:
+                suggestion = '📦 均重大，考虑按重量分段'
+            elif rate <= 10:
+                suggestion = '✅ 控制正常'
+            elif max_weight > 5:
+                suggestion = '📏 个别超重大单，注意抽检'
+
+            products.append({
+                'name': name,
+                'order_count': line_orders,
+                'surcharge_count': surcharge_orders,
+                'surcharge_amount': round(surcharge_amt, 2),
+                'avg_weight_kg': round(avg_weight, 2),
+                'surcharge_rate': rate,
+                'suggestion': suggestion
+            })
+            total_orders_all += line_orders
+            total_surcharge_all += surcharge_amt
+
+        return {
+            'products': products,
+            'summary': {
+                'total_products': len(products),
+                'total_orders': total_orders_all,
+                'total_surcharge': round(total_surcharge_all, 2)
+            }
+        }
 
 @app.get('/api/overweight/orders')
 def get_overweight_orders(month: str = 'may', page: int = 1, per_page: int = 50):
-    """超重订单列表"""
+    """超重订单列表 — 含产品/重量/收件人/线路"""
     with DB(DB_PATH) as db:
         offset = (page - 1) * per_page
-        rows = db.execute(
-            "SELECT order_sn, money_changed, description, creation_time FROM finance_logs WHERE month=? AND description LIKE '%超重%' ORDER BY creation_time DESC LIMIT ? OFFSET ?",
-            (month, per_page, offset)
-        ).fetchall()
+        rows = db.execute("""
+            SELECT f.order_sn, f.money_changed, f.description, f.creation_time,
+                   o.consignee_name, o.line_name, o.weight, o.state,
+                   o.sender_name
+            FROM finance_logs f
+            LEFT JOIN orders o ON CAST(f.order_sn AS TEXT) = o.sn
+            WHERE f.month=? AND f.description LIKE '%称重%'
+            ORDER BY f.creation_time DESC LIMIT ? OFFSET ?
+        """, (month, per_page, offset)).fetchall()
         total = db.execute(
-            "SELECT COUNT(*) FROM finance_logs WHERE month=? AND description LIKE '%超重%'",
+            "SELECT COUNT(*) FROM finance_logs WHERE month=? AND description LIKE '%称重%'",
             (month,)
         ).fetchone()[0]
-        items = [{'order_sn': r[0], 'amount': r[1]/100, 'description': r[2], 'time': r[3][:19]} for r in rows]
+        state_names = {2:'待入库',3:'国际运输',4:'国内配送',5:'已签收',-6:'已撤销',0:'已撤销'}
+        items = []
+        for r in rows:
+            weight_g = r[6] or 0
+            st = r[7]
+            items.append({
+                'order_sn': r[0],
+                'total_surcharge': r[1]/100,
+                'description': r[2],
+                'time': r[3][:19] if r[3] else '',
+                'product_name': r[5] or '',
+                'consignee': r[4] or '',
+                'line': r[5] or '',
+                'weight_g': weight_g,
+                'weight_kg': round(weight_g / 1000, 2) if weight_g else None,
+                'state_name': state_names.get(st, f'状态{st}'),
+                'sender_name': r[8] or '',
+                'surcharge_count': 1,
+                'has_surcharge': True,
+            })
         return {'items': items, 'total': total}
 
 @app.post('/api/finance/refresh')

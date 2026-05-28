@@ -1,0 +1,35 @@
+# 环境变量（含密码）
+.env
+
+# 数据目录（SQLite数据库等）
+data/
+
+# 缓存与临时文件
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.swo
+
+# 凭证文件
+.heute_cred
+.heute_token
+.track_cookies
+
+# 零时文件
+delivery/
+*.token
+*.log
+
+# 数据库
+*.db
+*.db-shm
+*.db-wal
+
+# CSV 导出
+*.csv
+*.csv.gz
+
+# JSON 临时文件
+*.json
+!docs/

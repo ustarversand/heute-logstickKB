@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 # 系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl cron rsyslog \
+    curl cron rsyslog tesseract-ocr \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Python 依赖
-RUN pip install --no-cache-dir fastapi uvicorn jinja2 aiofiles itsdangerous python-multipart -q
+RUN pip install --no-cache-dir fastapi uvicorn jinja2 aiofiles itsdangerous python-multipart Pillow -q
 
 WORKDIR /app
 
